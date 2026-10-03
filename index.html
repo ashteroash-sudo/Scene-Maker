@@ -926,7 +926,6 @@
     <div class="mode-switch">
       <button data-mode="edit">Édition</button>
       <button data-mode="mj" class="active">MJ</button>
-      <button data-mode="player">Joueur</button>
     </div>
     <button id="disk-open-root">📁 Dossier scénario</button>
     <button id="launch-player-window" title="Ouvrir la vue Joueur dans une nouvelle fenêtre, sur le 2e écran si possible">🖥️ Vue Joueur →</button>
@@ -1748,7 +1747,16 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     diskDeleteBtn.dataset.confirm = "";
     diskDeleteBtn.textContent = "🗑️ Supprimer la scène";
 
-    if (state.audioEnabled) {
+    if (state.mode !== "player") {
+      // démarrage auto de l'ambiance au changement de scène, mais
+      // uniquement côté MJ/édition — jamais côté vue Joueur, pour éviter
+      // le double son si les deux fenêtres tournent sur la même machine
+      state.audioEnabled = true;
+      audioBtn.classList.add("on");
+      audioBtn.textContent = "🔊 Son activé";
+      stopAmbient();
+      if (musicObjectURL) musicAudioEl.play().catch(() => {});
+    } else if (state.audioEnabled) {
       stopAmbient();
       if (musicObjectURL) musicAudioEl.play().catch(() => {});
     }
@@ -3090,8 +3098,6 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     await scanNpcFolder();
 
     document.querySelectorAll(".mode-switch button").forEach(b => b.classList.remove("active"));
-    const playerBtn = document.querySelector('.mode-switch button[data-mode="player"]');
-    if (playerBtn) playerBtn.classList.add("active");
     state.mode = "player";
     render();
     loadScenarioDocConfig();
@@ -3100,9 +3106,32 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     try {
       await document.documentElement.requestFullscreen();
     } catch (e) {
-      showToast("Plein écran refusé par le navigateur — F11 pour l'activer à la main.", true);
+      showFullscreenPrompt();
     }
     return true;
+  }
+
+  // Si le plein écran auto est refusé (le navigateur exige un vrai clic
+  // dans CETTE fenêtre), on affiche un gros bouton qui, lui, marchera à
+  // coup sûr puisque c'est un clic direct.
+  function showFullscreenPrompt() {
+    const overlay = document.createElement("div");
+    overlay.id = "fullscreen-prompt";
+    overlay.style.cssText =
+      "position:fixed;inset:0;z-index:999;display:flex;align-items:center;" +
+      "justify-content:center;background:rgba(0,0,0,0.75);cursor:pointer;";
+    overlay.innerHTML =
+      '<div style="background:#10171d;border:1px solid rgba(201,169,97,0.4);' +
+      'border-radius:12px;padding:28px 36px;text-align:center;color:#c9a961;' +
+      'font-family:Georgia, serif;font-size:1.1rem;">' +
+      '🖥️ Cliquer pour passer en plein écran</div>';
+    overlay.addEventListener("click", () => {
+      document.documentElement.requestFullscreen().catch(() => {
+        showToast("Plein écran toujours refusé — F11 pour l'activer à la main.", true);
+      });
+      overlay.remove();
+    });
+    document.body.appendChild(overlay);
   }
 
   (async () => {
