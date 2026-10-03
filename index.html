@@ -474,6 +474,60 @@
     opacity: 0;
   }
 
+  /* ---------- Effets : focus, tension, tremblement, zoom ---------- */
+  #scene-bg {
+    transition: filter 0.4s ease;
+  }
+  #scene-bg.focus-blur {
+    filter: blur(7px) brightness(0.72);
+  }
+  #tension-vignette {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 7;
+    display: none;
+    background: radial-gradient(ellipse at center, transparent 38%, rgba(120, 10, 10, 0.6) 100%);
+    animation: tension-pulse 3.2s ease-in-out infinite;
+  }
+  @keyframes tension-pulse {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 0.95; }
+  }
+  @keyframes screen-shake {
+    0% { transform: translate(0, 0); }
+    10% { transform: translate(-7px, 3px); }
+    20% { transform: translate(6px, -5px); }
+    30% { transform: translate(-5px, 5px); }
+    40% { transform: translate(7px, -3px); }
+    50% { transform: translate(-6px, 2px); }
+    60% { transform: translate(5px, -4px); }
+    70% { transform: translate(-3px, 3px); }
+    80% { transform: translate(2px, -2px); }
+    90% { transform: translate(-1px, 1px); }
+    100% { transform: translate(0, 0); }
+  }
+  #stage.shaking { animation: screen-shake 0.6s ease-out; }
+  @keyframes dramatic-zoom {
+    0% { transform: scale(1); }
+    40% { transform: scale(1.16); }
+    100% { transform: scale(1); }
+  }
+  #stage.zooming { animation: dramatic-zoom 1.1s ease-in-out; }
+  .effect-btn {
+    display: block;
+    width: 100%;
+    background: none;
+    border: 1px solid var(--panel-edge);
+    color: var(--ink);
+    border-radius: 8px;
+    padding: 7px 10px;
+    font-size: 0.83rem;
+    cursor: pointer;
+    margin-top: 2px;
+  }
+  .effect-btn:hover { border-color: var(--gold-soft); color: var(--gold); }
+
   /* ---------- Portraits NPC (panneau "Personnages") ---------- */
   #npc-portrait-layer {
     position: absolute;
@@ -573,7 +627,7 @@
   #npc-refresh:hover, #notes-refresh:hover, #notes-pick:hover { color: var(--gold); }
   .h3-actions { display: flex; gap: 8px; }
   #npc-checklist { padding-bottom: 10px; }
-  #weather-panel {
+  #weather-panel, #effects-panel {
     padding: 0 14px 14px;
     display: flex;
     flex-direction: column;
@@ -1035,6 +1089,7 @@
           <div class="fog-tint"></div>
         </div>
         <div id="weather-storm"><div class="flash"></div></div>
+        <div id="tension-vignette"></div>
         <div id="insert-layer"></div>
         <div class="hint" id="mode-hint"></div>
       </div>
@@ -1062,6 +1117,13 @@
         <input type="range" id="snow-intensity" class="weather-slider" min="10" max="100" value="50" title="Intensité de la neige" style="display:none;">
         <label class="weather-row"><input type="checkbox" id="weather-fog-toggle"> 🌫️ Brouillard</label>
         <label class="weather-row"><input type="checkbox" id="weather-storm-toggle"> ⛈️ Orage</label>
+      </div>
+
+      <h3>Effets</h3>
+      <div id="effects-panel">
+        <label class="weather-row"><input type="checkbox" id="tension-toggle"> 😰 Vignette de tension</label>
+        <button id="shake-btn" class="effect-btn">📳 Tremblement</button>
+        <button id="zoom-btn" class="effect-btn">🔍 Zoom dramatique</button>
       </div>
     </div>
   </div>
@@ -1245,6 +1307,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let weatherSnow = false;
   let weatherFog = false;
   let weatherStorm = false;
+  let tensionVignette = false;
   let rainIntensity = 50; // 10-100
   let snowIntensity = 50; // 10-100
   let musicVolume = 70; // 0-100
@@ -1315,6 +1378,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         weatherSnow: weatherSnow,
         weatherFog: weatherFog,
         weatherStorm: weatherStorm,
+        tensionVignette: tensionVignette,
         rainIntensity: rainIntensity,
         snowIntensity: snowIntensity,
         musicVolume: musicVolume
@@ -2004,6 +2068,55 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     broadcastState();
   });
 
+  // ---------------------------------------------------------------
+  // Effets ponctuels : vignette de tension (persistante), tremblement
+  // et zoom (déclencheurs ponctuels, synchronisés MJ -> Joueur)
+  // ---------------------------------------------------------------
+
+  const tensionToggle = document.getElementById("tension-toggle");
+  const tensionVignetteEl = document.getElementById("tension-vignette");
+  const stageEl = document.getElementById("stage");
+
+  function renderTensionVignette() {
+    tensionVignetteEl.style.display = tensionVignette ? "block" : "none";
+  }
+
+  tensionToggle.addEventListener("change", () => {
+    tensionVignette = tensionToggle.checked;
+    renderTensionVignette();
+    if (diskMode) saveSceneToDisk();
+    broadcastState();
+  });
+
+  function playShake() {
+    stageEl.classList.remove("shaking");
+    void stageEl.offsetWidth; // force le redémarrage de l'animation
+    stageEl.classList.add("shaking");
+    setTimeout(() => stageEl.classList.remove("shaking"), 650);
+  }
+
+  function playZoom() {
+    stageEl.classList.remove("zooming");
+    void stageEl.offsetWidth;
+    stageEl.classList.add("zooming");
+    setTimeout(() => stageEl.classList.remove("zooming"), 1150);
+  }
+
+  function broadcastEffect(effect) {
+    if (!bc) return;
+    bc.postMessage({ type: "effect", effect: effect });
+  }
+
+  document.getElementById("shake-btn").addEventListener("click", () => {
+    playShake();
+    broadcastEffect("shake");
+  });
+
+  document.getElementById("zoom-btn").addEventListener("click", () => {
+    playZoom();
+    broadcastEffect("zoom");
+  });
+
   weatherSnowToggle.addEventListener("change", () => {
     weatherSnow = weatherSnowToggle.checked;
     renderWeather();
@@ -2132,6 +2245,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     weatherSnowToggle.checked = weatherSnow;
     weatherFogToggle.checked = weatherFog;
     weatherStormToggle.checked = weatherStorm;
+    tensionVignette = !!sceneData.tensionVignette;
+    tensionToggle.checked = tensionVignette;
+    renderTensionVignette();
     rainIntensity = sceneData.rainIntensity || 50;
     rainIntensityInput.value = rainIntensity;
     snowIntensity = sceneData.snowIntensity || 50;
@@ -2187,7 +2303,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       await writeFileIntoDir(musiquesDir, musicDestName, musicFile);
     }
 
-    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [], weatherRain: false, weatherSnow: false, weatherFog: false, weatherStorm: false, rainIntensity: 50, snowIntensity: 50, musicVolume: 70 };
+    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [], weatherRain: false, weatherSnow: false, weatherFog: false, weatherStorm: false, tensionVignette: false, rainIntensity: 50, snowIntensity: 50, musicVolume: 70 };
     await writeJsonIntoDir(sceneDir, "scene.json", sceneData);
     return folderName;
   }
@@ -2278,6 +2394,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     weatherSnowToggle.checked = false;
     weatherFogToggle.checked = false;
     weatherStormToggle.checked = false;
+    tensionVignette = false;
+    tensionToggle.checked = false;
+    renderTensionVignette();
     rainIntensity = 50;
     rainIntensityInput.value = 50;
     snowIntensity = 50;
@@ -2495,6 +2614,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   function render() {
     body.className = "mode-" + state.mode;
     sceneBg.src = diskMode ? (bgObjectURL || "") : window.__SCENE_IMG__;
+    sceneBg.classList.toggle("focus-blur", state.insertStack.length > 0);
     renderBaseZones();
     renderInserts();
     renderNpcPortraits();
@@ -3259,6 +3379,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       weatherSnow: weatherSnow,
       weatherFog: weatherFog,
       weatherStorm: weatherStorm,
+      tensionVignette: tensionVignette,
       rainIntensity: rainIntensity,
       snowIntensity: snowIntensity,
       musicVolume: musicVolume
@@ -3310,6 +3431,11 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         weatherSnowToggle.checked = weatherSnow;
         weatherFogToggle.checked = weatherFog;
         weatherStormToggle.checked = weatherStorm;
+        if (typeof msg.tensionVignette === "boolean" && msg.tensionVignette !== tensionVignette) {
+          tensionVignette = msg.tensionVignette;
+          tensionToggle.checked = tensionVignette;
+          renderTensionVignette();
+        }
         if (weatherChanged || sceneChanged) {
           renderWeather();
         } else {
@@ -3318,6 +3444,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         }
         render();
         hydrateActiveNpcImages();
+      } else if (msg.type === "effect") {
+        if (msg.effect === "shake") playShake();
+        else if (msg.effect === "zoom") playZoom();
       }
     };
   }
