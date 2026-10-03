@@ -1121,6 +1121,13 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   const diskSceneSelect = document.getElementById("disk-scene-select");
   const diskDeleteBtn = document.getElementById("disk-delete-scene");
 
+  // Le bouton de suppression ne doit apparaître qu'en mode Édition, et
+  // seulement si une scène est chargée — trop risqué à côté du simple
+  // changement de scène sinon.
+  function updateDeleteBtnVisibility() {
+    diskDeleteBtn.style.display = (state.mode === "edit" && currentSceneName) ? "inline-block" : "none";
+  }
+
   // ---------------------------------------------------------------
   // Branchement disque (File System Access API)
   // ---------------------------------------------------------------
@@ -1743,9 +1750,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     state.insertStack = [];
     state.selectedZoneId = null;
     diskSceneSelect.value = folderName;
-    diskDeleteBtn.style.display = "inline-block";
     diskDeleteBtn.dataset.confirm = "";
     diskDeleteBtn.textContent = "🗑️ Supprimer la scène";
+    updateDeleteBtnVisibility();
 
     if (state.mode !== "player") {
       // démarrage auto de l'ambiance au changement de scène, mais
@@ -2569,6 +2576,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (state.mode === "player") requestStateFromPeers();
       if (state.mode !== "edit") cancelDrawing();
       closeNotesFloating();
+      updateDeleteBtnVisibility();
       render();
       if (weatherRain) resizeWeatherCanvas();
     });
