@@ -1041,6 +1041,62 @@
     line-height: 1.4;
   }
 
+  .gallery-form { width: 480px; max-height: 72vh; display: flex; flex-direction: column; }
+  .gallery-scroll { overflow-y: auto; flex: 1; margin: 10px 0; min-height: 60px; }
+  .gallery-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .gallery-thumb {
+    background: var(--bg-void);
+    border: 1px solid var(--panel-edge);
+    border-radius: 8px;
+    padding: 6px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+  }
+  .gallery-thumb:hover { border-color: var(--gold-soft); }
+  .gallery-thumb img {
+    width: 100%;
+    height: 80px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: #000;
+  }
+  .gallery-thumb span {
+    font-size: 0.68rem;
+    color: var(--ink-dim);
+    word-break: break-all;
+    text-align: center;
+  }
+  .gallery-list { display: flex; flex-direction: column; gap: 6px; }
+  .gallery-audio-item {
+    background: var(--bg-void);
+    border: 1px solid var(--panel-edge);
+    border-radius: 8px;
+    padding: 8px 12px;
+    text-align: left;
+    color: var(--ink);
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .gallery-audio-item:hover { border-color: var(--gold-soft); }
+
+  .drop-target-hint {
+    position: absolute;
+    inset: 0;
+    border: 3px dashed var(--gold);
+    background: rgba(201, 169, 97, 0.12);
+    z-index: 400;
+    pointer-events: none;
+    display: none;
+  }
+  .drop-target-hint.active { display: block; }
+
   .hint {
     position: absolute;
     bottom: 10px;
@@ -1090,6 +1146,7 @@
         </div>
         <div id="weather-storm"><div class="flash"></div></div>
         <div id="tension-vignette"></div>
+        <div id="drop-target-hint" class="drop-target-hint"></div>
         <div id="insert-layer"></div>
         <div class="hint" id="mode-hint"></div>
       </div>
@@ -1295,6 +1352,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let scenesList = [];
   const loadedSceneNames = {};
   let npcDirHandle = null;
+  let vracDirHandle = null;
+  let vracImages = []; // noms de fichiers image
+  let vracAudio = []; // noms de fichiers son
+  const vracThumbURLs = {}; // nom -> URL (vignette, chargée à la demande)
   let npcList = []; // { fileName, displayName }
   let activeNpcOrder = []; // fileNames, dans l'ordre d'activation
   let speakingNpc = null; // fileName du personnage mis en avant, ou null
@@ -1420,7 +1481,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     diskSceneSelect.appendChild(optEmpty);
     try {
       for await (const [name, handle] of rootDirHandle.entries()) {
-        if (handle.kind === "directory" && name !== "npc" && name !== "meteo") {
+        if (handle.kind === "directory" && name !== "npc" && name !== "meteo" && name !== "vrac") {
           scenesList.push(name);
           const opt = document.createElement("option");
           opt.value = name;
@@ -1836,6 +1897,175 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   }
 
   document.getElementById("npc-refresh").addEventListener("click", scanNpcFolder);
+
+  // ---------------------------------------------------------------
+  // Galerie de vrac (dossier "vrac" partagé) + glisser-déposer
+  // ---------------------------------------------------------------
+
+  async function scanVracFolder() {
+    vracImages = [];
+    vracAudio = [];
+    if (!rootDirHandle) return;
+    try {
+      vracDirHandle = await rootDirHandle.getDirectoryHandle("vrac", { create: true });
+      for await (const [name, handle] of vracDirHandle.entries()) {
+        if (handle.kind !== "file") continue;
+        if (/\.(png|jpe?g|webp|gif)$/i.test(name)) vracImages.push(name);
+        else if (/\.(mp3|wav|ogg|m4a)$/i.test(name)) vracAudio.push(name);
+      }
+      vracImages.sort((a, b) => a.localeCompare(b));
+      vracAudio.sort((a, b) => a.localeCompare(b));
+    } catch (e) {
+      // dossier "vrac" illisible : la galerie restera juste vide
+    }
+  }
+
+  async function getVracThumbURL(fileName) {
+    if (vracThumbURLs[fileName]) return vracThumbURLs[fileName];
+    if (!vracDirHandle) return null;
+    try {
+      const fh = await vracDirHandle.getFileHandle(fileName);
+      const file = await fh.getFile();
+      const url = URL.createObjectURL(file);
+      vracThumbURLs[fileName] = url;
+      return url;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  async function getVracFile(fileName) {
+    const fh = await vracDirHandle.getFileHandle(fileName);
+    return await fh.getFile();
+  }
+
+  // Petite galerie flottante : vignettes du dossier "vrac" pour choisir
+  // un fichier d'un clic, avec repli vers le sélecteur système classique.
+  function openAssetPicker(kind, onPick) {
+    const overlay = document.createElement("div");
+    overlay.className = "zone-form-overlay";
+    const list = kind === "image" ? vracImages : vracAudio;
+    const itemsHtml = list.length
+      ? (kind === "image"
+          ? '<div class="gallery-grid">' + list.map(n =>
+              '<button type="button" class="gallery-thumb" data-name="' + escapeAttr(n) + '">' +
+                '<img data-name="' + escapeAttr(n) + '">' +
+                '<span>' + n + '</span>' +
+              '</button>'
+            ).join("") + '</div>'
+          : '<div class="gallery-list">' + list.map(n =>
+              '<button type="button" class="gallery-audio-item" data-name="' + escapeAttr(n) + '">🔊 ' + n + '</button>'
+            ).join("") + '</div>')
+      : '<div class="empty" style="padding:16px 0;">Dossier "vrac" vide pour ce type de fichier.</div>';
+
+    overlay.innerHTML =
+      '<div class="zone-form gallery-form">' +
+        '<h4>Choisir ' + (kind === "image" ? "une image" : "un son") + '</h4>' +
+        '<div class="gallery-scroll">' + itemsHtml + '</div>' +
+        '<div class="form-actions">' +
+          '<button id="gallery-browse">📁 Parcourir mon PC…</button>' +
+          '<button id="gallery-cancel">Annuler</button>' +
+        '</div>' +
+      '</div>';
+    document.getElementById("stage").appendChild(overlay);
+
+    if (kind === "image") {
+      overlay.querySelectorAll("img[data-name]").forEach(async img => {
+        const url = await getVracThumbURL(img.dataset.name);
+        if (url) img.src = url;
+      });
+    }
+
+    overlay.querySelectorAll("button[data-name]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const file = await getVracFile(btn.dataset.name);
+        overlay.remove();
+        onPick(file);
+      });
+    });
+
+    overlay.querySelector("#gallery-cancel").addEventListener("click", () => overlay.remove());
+
+    overlay.querySelector("#gallery-browse").addEventListener("click", async () => {
+      overlay.remove();
+      try {
+        const accept = kind === "image"
+          ? { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".gif"] }
+          : { "audio/*": [".mp3", ".wav", ".ogg", ".m4a"] };
+        const [handle] = await window.showOpenFilePicker({ types: [{ description: kind === "image" ? "Images" : "Audio", accept }] });
+        const file = await handle.getFile();
+        onPick(file);
+      } catch (e) {}
+    });
+  }
+
+  // Glisser-déposer "intelligent" sur la scène, en plus du sélecteur/de la
+  // galerie : rien sous le curseur -> fond (image) ou musique (son) de la
+  // scène ; une zone sous le curseur -> associé à cette zone.
+  const dropHintEl = document.getElementById("drop-target-hint");
+  const stageDropEl = document.getElementById("stage");
+
+  function zoneShapeAtPoint(x, y) {
+    const el = document.elementFromPoint(x, y);
+    const shape = el && el.closest ? el.closest(".zone-shape") : null;
+    if (!shape || !shape.dataset.zoneId) return null;
+    return findZoneContext(shape.dataset.zoneId);
+  }
+
+  function dragDropActive() {
+    return state.mode === "edit" && diskMode && currentSceneDirHandle;
+  }
+
+  stageDropEl.addEventListener("dragover", (e) => {
+    if (!dragDropActive()) return;
+    e.preventDefault();
+    dropHintEl.classList.add("active");
+  });
+  stageDropEl.addEventListener("dragleave", (e) => {
+    if (e.target === stageDropEl) dropHintEl.classList.remove("active");
+  });
+  stageDropEl.addEventListener("drop", async (e) => {
+    if (!dragDropActive()) return;
+    e.preventDefault();
+    dropHintEl.classList.remove("active");
+    const file = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    const isImage = /^image\//.test(file.type) || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
+    const isAudio = /^audio\//.test(file.type) || /\.(mp3|wav|ogg|m4a)$/i.test(file.name);
+    if (!isImage && !isAudio) {
+      showToast("Format non reconnu (image ou son attendu).", true);
+      return;
+    }
+    const ctx = zoneShapeAtPoint(e.clientX, e.clientY);
+    if (ctx) {
+      if (isImage) {
+        if (ctx.zone.type !== "image" && ctx.zone.type !== "personnage") {
+          showToast("Cette zone n'accepte pas d'image (type \"" + ctx.zone.type + "\").", true);
+          return;
+        }
+        await attachImageToZone(ctx.zone, file);
+        renderInserts();
+        renderZoneInfo();
+        showToast("Image associée à \"" + ctx.zone.name + "\".");
+      } else {
+        if (ctx.zone.type !== "son") {
+          showToast("Cette zone n'accepte pas de son (type \"" + ctx.zone.type + "\").", true);
+          return;
+        }
+        await attachSoundToZone(ctx.zone, file);
+        renderZoneInfo();
+        showToast("Son associé à \"" + ctx.zone.name + "\".");
+      }
+    } else {
+      if (isImage) {
+        await attachSceneBackground(file);
+        showToast("Image de fond mise à jour.");
+      } else {
+        await attachSceneMusic(file);
+        showToast("Musique de scène mise à jour.");
+      }
+    }
+  });
 
   // ---------------------------------------------------------------
   // Effets météo (calque au-dessus de la scène — pluie / brouillard)
@@ -2332,23 +2562,17 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     let bgFile = null;
     let musicFile = null;
 
-    overlay.querySelector("#ns-pick-bg").addEventListener("click", async () => {
-      try {
-        const [handle] = await window.showOpenFilePicker({
-          types: [{ description: "Images", accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".gif"] } }]
-        });
-        bgFile = await handle.getFile();
+    overlay.querySelector("#ns-pick-bg").addEventListener("click", () => {
+      openAssetPicker("image", (file) => {
+        bgFile = file;
         overlay.querySelector("#ns-bg-label").textContent = bgFile.name;
-      } catch (e) {}
+      });
     });
-    overlay.querySelector("#ns-pick-music").addEventListener("click", async () => {
-      try {
-        const [handle] = await window.showOpenFilePicker({
-          types: [{ description: "Audio", accept: { "audio/*": [".mp3", ".wav", ".ogg", ".m4a"] } }]
-        });
-        musicFile = await handle.getFile();
+    overlay.querySelector("#ns-pick-music").addEventListener("click", () => {
+      openAssetPicker("audio", (file) => {
+        musicFile = file;
         overlay.querySelector("#ns-music-label").textContent = musicFile.name;
-      } catch (e) {}
+      });
     });
 
     overlay.querySelector("#ns-cancel").addEventListener("click", () => overlay.remove());
@@ -2420,6 +2644,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       await scanScenes();
       await scanNpcFolder();
       await scanMeteoFolder();
+      await scanVracFolder();
       broadcastState();
       render();
       loadScenarioDocConfig();
@@ -2909,45 +3134,22 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
     const assocImgBtn = zoneInfoEl.querySelector("#zi-assoc-image");
     if (assocImgBtn) {
-      assocImgBtn.addEventListener("click", async () => {
-        try {
-          const [handle] = await window.showOpenFilePicker({
-            types: [{ description: "Images", accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".gif"] } }]
-          });
-          const file = await handle.getFile();
-          const inserts = await currentSceneDirHandle.getDirectoryHandle("inserts", { create: true });
-          const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-          const destName = zone.id + "." + ext;
-          await writeFileIntoDir(inserts, destName, file);
-          if (zone.insert._url) URL.revokeObjectURL(zone.insert._url);
-          zone.insert.assetFile = destName;
-          zone.insert._url = URL.createObjectURL(file);
-          saveSceneToDisk();
+      assocImgBtn.addEventListener("click", () => {
+        openAssetPicker("image", async (file) => {
+          await attachImageToZone(zone, file);
           renderInserts();
           renderZoneInfo();
-        } catch (e) {}
+        });
       });
     }
 
     const assocSoundBtn = zoneInfoEl.querySelector("#zi-assoc-sound");
     if (assocSoundBtn) {
-      assocSoundBtn.addEventListener("click", async () => {
-        try {
-          const [handle] = await window.showOpenFilePicker({
-            types: [{ description: "Audio", accept: { "audio/*": [".mp3", ".wav", ".ogg", ".m4a"] } }]
-          });
-          const file = await handle.getFile();
-          const sons = await currentSceneDirHandle.getDirectoryHandle("sons", { create: true });
-          const ext = (file.name.split(".").pop() || "mp3").toLowerCase();
-          const destName = zone.id + "." + ext;
-          await writeFileIntoDir(sons, destName, file);
-          if (zone._url) URL.revokeObjectURL(zone._url);
-          zone.assetFile = destName;
-          zone._url = URL.createObjectURL(file);
-          delete zoneAudioEls[zone.id];
-          saveSceneToDisk();
+      assocSoundBtn.addEventListener("click", () => {
+        openAssetPicker("audio", async (file) => {
+          await attachSoundToZone(zone, file);
           renderZoneInfo();
-        } catch (e) {}
+        });
       });
     }
 
@@ -2995,6 +3197,55 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       }
     }
     return null;
+  }
+
+  async function attachImageToZone(zone, file) {
+    if (!zone.insert) zone.insert = { title: zone.name, caption: "", icon: zone.icon };
+    const inserts = await currentSceneDirHandle.getDirectoryHandle("inserts", { create: true });
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const destName = zone.id + "." + ext;
+    await writeFileIntoDir(inserts, destName, file);
+    if (zone.insert._url) URL.revokeObjectURL(zone.insert._url);
+    zone.insert.assetFile = destName;
+    zone.insert._url = URL.createObjectURL(file);
+    saveSceneToDisk();
+  }
+
+  async function attachSoundToZone(zone, file) {
+    const sons = await currentSceneDirHandle.getDirectoryHandle("sons", { create: true });
+    const ext = (file.name.split(".").pop() || "mp3").toLowerCase();
+    const destName = zone.id + "." + ext;
+    await writeFileIntoDir(sons, destName, file);
+    if (zone._url) URL.revokeObjectURL(zone._url);
+    zone.assetFile = destName;
+    zone._url = URL.createObjectURL(file);
+    delete zoneAudioEls[zone.id];
+    saveSceneToDisk();
+  }
+
+  async function attachSceneBackground(file) {
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+    const destName = "background." + ext;
+    await writeFileIntoDir(currentSceneDirHandle, destName, file);
+    if (bgObjectURL) URL.revokeObjectURL(bgObjectURL);
+    bgObjectURL = URL.createObjectURL(file);
+    currentSceneMeta.background = destName;
+    saveSceneToDisk();
+    render();
+  }
+
+  async function attachSceneMusic(file) {
+    const musiquesDir = await currentSceneDirHandle.getDirectoryHandle("musiques", { create: true });
+    const ext = (file.name.split(".").pop() || "mp3").toLowerCase();
+    const destName = "musique." + ext;
+    await writeFileIntoDir(musiquesDir, destName, file);
+    if (musicObjectURL) URL.revokeObjectURL(musicObjectURL);
+    musicObjectURL = URL.createObjectURL(file);
+    currentSceneMeta.music = destName;
+    musicAudioEl.src = musicObjectURL;
+    musicAudioEl.volume = musicVolume / 100;
+    if (state.mode !== "player") musicAudioEl.play().catch(() => {});
+    saveSceneToDisk();
   }
 
   function deleteZone(zone) {
@@ -3655,6 +3906,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     await scanScenes();
     await scanNpcFolder();
     await scanMeteoFolder();
+    await scanVracFolder();
 
     document.querySelectorAll(".mode-switch button").forEach(b => b.classList.remove("active"));
     state.mode = "player";
