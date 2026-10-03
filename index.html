@@ -121,6 +121,17 @@
     cursor: pointer;
     white-space: nowrap;
   }
+  #launch-player-window {
+    background: none;
+    border: 1px solid var(--edit);
+    color: var(--edit);
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  #launch-player-window:hover { background: var(--edit); color: #06181e; }
   #disk-scene-select {
     background: var(--bg-void);
     border: 1px solid var(--panel-edge);
@@ -918,6 +929,7 @@
       <button data-mode="player">Joueur</button>
     </div>
     <button id="disk-open-root">📁 Dossier scénario</button>
+    <button id="launch-player-window" title="Ouvrir la vue Joueur dans une nouvelle fenêtre, sur le 2e écran si possible">🖥️ Vue Joueur →</button>
     <select id="disk-scene-select" style="display:none;"></select>
     <button id="disk-delete-scene" style="display:none;">🗑️ Supprimer la scène</button>
     <div id="breadcrumb"></div>
@@ -1877,6 +1889,49 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       // sélection annulée par l'utilisateur
     }
   });
+
+  // ---------------------------------------------------------------
+  // Lancer une fenêtre Joueur séparée (2e écran si détecté)
+  // ---------------------------------------------------------------
+
+  // Répond à une nouvelle fenêtre qui nous demande le dossier déjà
+  // sélectionné (transfert de la "poignée" par postMessage — façon
+  // documentée de faire voyager ce genre d'objet entre fenêtres).
+  window.addEventListener("message", (ev) => {
+    if (!ev.data || ev.data.type !== "request-root-handle") return;
+    if (!rootDirHandle || !ev.source) return;
+    try {
+      ev.source.postMessage({ type: "root-handle", rootDirHandle: rootDirHandle }, "*");
+    } catch (e) {
+      showToast("Impossible de transmettre le dossier à la nouvelle fenêtre.", true);
+    }
+  });
+
+  async function launchPlayerWindow() {
+    if (!rootDirHandle) {
+      showToast("Ouvre d'abord un dossier de scénario.", true);
+      return;
+    }
+    let features = "width=1280,height=800";
+    try {
+      if ("getScreenDetails" in window) {
+        const details = await window.getScreenDetails();
+        const other = details.screens.find(s => s !== details.currentScreen);
+        if (other) {
+          features = "left=" + other.availLeft + ",top=" + other.availTop +
+                     ",width=" + other.availWidth + ",height=" + other.availHeight;
+        }
+      }
+    } catch (e) {
+      // API indisponible, ou permission refusée : on ouvre en fenêtre normale
+    }
+    const win = window.open(location.href, "_blank", features);
+    if (!win) {
+      showToast("La fenêtre a été bloquée (bloqueur de pop-up ?).", true);
+    }
+  }
+
+  document.getElementById("launch-player-window").addEventListener("click", launchPlayerWindow);
 
   diskDeleteBtn.addEventListener("click", async () => {
     if (!currentSceneName) return;
@@ -2999,8 +3054,64 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   document.getElementById("notes-refresh").addEventListener("click", renderScenarioDoc);
 
   // ---------------------------------------------------------------
-  render();
-  loadScenarioDocConfig();
+  // Si cette fenêtre a été ouverte par le bouton "Vue Joueur →" d'une
+  // autre fenêtre du même outil, on demande le dossier déjà autorisé
+  // là-bas, puis on bascule tout seul en vue Joueur (et on tente le
+  // plein écran — ça peut être refusé par le navigateur puisque ce
+  // n'est pas un clic direct dans CETTE fenêtre).
+  function requestRootHandleFromOpener() {
+    return new Promise((resolve) => {
+      if (!window.opener) { resolve(null); return; }
+      let settled = false;
+      function onMsg(ev) {
+        if (!ev.data || ev.data.type !== "root-handle") return;
+        settled = true;
+        window.removeEventListener("message", onMsg);
+        resolve(ev.data.rootDirHandle || null);
+      }
+      window.addEventListener("message", onMsg);
+      try {
+        window.opener.postMessage({ type: "request-root-handle" }, "*");
+      } catch (e) {}
+      setTimeout(() => {
+        if (!settled) {
+          window.removeEventListener("message", onMsg);
+          resolve(null);
+        }
+      }, 2000);
+    });
+  }
+
+  async function bootstrapFromOpener() {
+    const handle = await requestRootHandleFromOpener();
+    if (!handle) return false;
+    rootDirHandle = handle;
+    await scanScenes();
+    await scanNpcFolder();
+
+    document.querySelectorAll(".mode-switch button").forEach(b => b.classList.remove("active"));
+    const playerBtn = document.querySelector('.mode-switch button[data-mode="player"]');
+    if (playerBtn) playerBtn.classList.add("active");
+    state.mode = "player";
+    render();
+    loadScenarioDocConfig();
+    requestStateFromPeers();
+
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch (e) {
+      showToast("Plein écran refusé par le navigateur — F11 pour l'activer à la main.", true);
+    }
+    return true;
+  }
+
+  (async () => {
+    const ok = await bootstrapFromOpener();
+    if (!ok) {
+      render();
+      loadScenarioDocConfig();
+    }
+  })();
 })();
 </script>
 </body>
