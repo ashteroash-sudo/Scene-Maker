@@ -132,15 +132,18 @@
     white-space: nowrap;
   }
   #launch-player-window:hover { background: var(--edit); color: #06181e; }
-  #disk-scene-select {
-    background: var(--bg-void);
+  #scenes-mosaic-toggle {
+    background: none;
     border: 1px solid var(--panel-edge);
-    color: var(--ink);
+    color: var(--ink-dim);
     border-radius: 8px;
-    padding: 6px 8px;
+    padding: 6px 12px;
     font-size: 0.8rem;
-    max-width: 160px;
+    cursor: pointer;
+    white-space: nowrap;
   }
+  #scenes-mosaic-toggle:hover { border-color: var(--gold-soft); color: var(--gold); }
+  #scenes-mosaic-toggle.active { border-color: var(--gold); color: var(--gold); background: var(--gold-soft); }
   #music-volume {
     width: 80px;
     accent-color: var(--gold);
@@ -1097,6 +1100,82 @@
   }
   .drop-target-hint.active { display: block; }
 
+  .scenes-mosaic {
+    position: absolute;
+    inset: 0;
+    z-index: 500;
+    background: var(--bg-void);
+    padding: 24px;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+    align-content: start;
+  }
+  .scenes-mosaic.hidden { display: none; }
+  .mosaic-tile {
+    position: relative;
+    border: 1px solid var(--panel-edge);
+    border-radius: 10px;
+    overflow: hidden;
+    cursor: pointer;
+    background: #000;
+    aspect-ratio: 768 / 512;
+    display: flex;
+    align-items: flex-end;
+  }
+  .mosaic-tile:hover { border-color: var(--gold-soft); }
+  .mosaic-tile.active-scene { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold); }
+  .mosaic-tile img {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .mosaic-tile .mosaic-label {
+    position: relative;
+    z-index: 1;
+    width: 100%;
+    padding: 8px 10px;
+    background: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
+    color: var(--ink);
+    font-size: 0.85rem;
+  }
+  .mosaic-tile .mosaic-placeholder-icon {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.8rem;
+    color: var(--ink-dim);
+    opacity: 0.5;
+  }
+  .mosaic-tile.add-tile {
+    border: 2px dashed var(--panel-edge);
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--ink-dim);
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 10px;
+  }
+  .mosaic-tile.add-tile:hover, .mosaic-tile.add-tile.drag-over {
+    border-color: var(--gold);
+    color: var(--gold);
+    background: rgba(201, 169, 97, 0.08);
+  }
+  .mosaic-tile.add-tile .plus-icon { font-size: 1.8rem; }
+  .mosaic-hint {
+    grid-column: 1 / -1;
+    color: var(--ink-dim);
+    font-size: 0.8rem;
+    margin-bottom: 4px;
+  }
+
   .hint {
     position: absolute;
     bottom: 10px;
@@ -1122,7 +1201,7 @@
     </div>
     <button id="disk-open-root">📁 Dossier scénario</button>
     <button id="launch-player-window" title="Ouvrir la vue Joueur dans une nouvelle fenêtre, sur le 2e écran si possible">🖥️ Vue Joueur →</button>
-    <select id="disk-scene-select" style="display:none;"></select>
+    <button id="scenes-mosaic-toggle" style="display:none;">🔲 Scènes</button>
     <button id="disk-delete-scene" style="display:none;">🗑️ Supprimer la scène</button>
     <div id="breadcrumb"></div>
     <button id="draw-toggle">✏️ Créer une zone</button>
@@ -1150,6 +1229,7 @@
         <div id="insert-layer"></div>
         <div class="hint" id="mode-hint"></div>
       </div>
+      <div id="scenes-mosaic" class="scenes-mosaic hidden"></div>
     </div>
     <div id="side-panel">
       <h3>Zone sélectionnée</h3>
@@ -1328,7 +1408,6 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   const modeHint = document.getElementById("mode-hint");
   const sceneBg = document.getElementById("scene-bg");
   const diskRootBtn = document.getElementById("disk-open-root");
-  const diskSceneSelect = document.getElementById("disk-scene-select");
   const diskDeleteBtn = document.getElementById("disk-delete-scene");
 
   // Le bouton de suppression ne doit apparaître qu'en mode Édition, et
@@ -1350,6 +1429,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let bgObjectURL = null;
   let musicObjectURL = null;
   let scenesList = [];
+  let scenesMosaicOpen = false;
+  const sceneThumbURLs = {}; // nom de scène -> URL de la vignette (fond)
   const loadedSceneNames = {};
   let npcDirHandle = null;
   let vracDirHandle = null;
@@ -1485,31 +1566,18 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   async function scanScenes() {
     scenesList = [];
-    diskSceneSelect.innerHTML = "";
-    const optEmpty = document.createElement("option");
-    optEmpty.value = "";
-    optEmpty.textContent = "— Choisir une scène —";
-    diskSceneSelect.appendChild(optEmpty);
     try {
       for await (const [name, handle] of rootDirHandle.entries()) {
         if (handle.kind === "directory" && name !== "npc" && name !== "meteo" && name !== "vrac") {
           scenesList.push(name);
-          const opt = document.createElement("option");
-          opt.value = name;
-          opt.textContent = loadedSceneNames[name] || name;
-          diskSceneSelect.appendChild(opt);
         }
       }
     } catch (e) {
       showToast("Impossible de lire ce dossier.", true);
       return;
     }
-    const optNew = document.createElement("option");
-    optNew.value = "__new__";
-    optNew.textContent = "➕ Nouvelle scène…";
-    diskSceneSelect.appendChild(optNew);
-    diskSceneSelect.style.display = "inline-block";
     diskRootBtn.textContent = "📁 " + (rootDirHandle.name || "Dossier");
+    if (scenesMosaicOpen) renderScenesMosaic();
   }
 
   // ---------------------------------------------------------------
@@ -2502,7 +2570,6 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     state.sceneId = folderName;
     state.insertStack = [];
     state.selectedZoneId = null;
-    diskSceneSelect.value = folderName;
     diskDeleteBtn.dataset.confirm = "";
     diskDeleteBtn.textContent = "🗑️ Supprimer la scène";
     updateDeleteBtnVisibility();
@@ -2549,6 +2616,133 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     await writeJsonIntoDir(sceneDir, "scene.json", sceneData);
     return folderName;
   }
+
+  // ---------------------------------------------------------------
+  // Mosaïque des scènes (remplace le menu déroulant) — navigation en
+  // MJ/Édition sans jamais toucher à ce que voit la vue Joueur tant
+  // qu'on n'a pas double-cliqué une vignette.
+  // ---------------------------------------------------------------
+
+  const scenesMosaicToggle = document.getElementById("scenes-mosaic-toggle");
+  const scenesMosaicEl = document.getElementById("scenes-mosaic");
+
+  function updateMosaicToggleVisibility() {
+    scenesMosaicToggle.style.display = rootDirHandle ? "inline-block" : "none";
+  }
+
+  async function getSceneThumbURL(name) {
+    if (sceneThumbURLs[name]) return sceneThumbURLs[name];
+    try {
+      const sceneDir = await rootDirHandle.getDirectoryHandle(name);
+      const jsonFh = await sceneDir.getFileHandle("scene.json");
+      const jsonFile = await jsonFh.getFile();
+      const data = JSON.parse(await jsonFile.text());
+      if (!data.background) return null;
+      const bgFh = await sceneDir.getFileHandle(data.background);
+      const bgFile = await bgFh.getFile();
+      const url = URL.createObjectURL(bgFile);
+      sceneThumbURLs[name] = url;
+      return url;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function renderScenesMosaic() {
+    scenesMosaicEl.innerHTML = '<div class="mosaic-hint">Double-clique une scène pour la charger (MJ + vue Joueur).</div>';
+    scenesList.forEach(name => {
+      const tile = document.createElement("div");
+      tile.className = "mosaic-tile" + (name === currentSceneName ? " active-scene" : "");
+      tile.innerHTML =
+        '<div class="mosaic-placeholder-icon">🖼️</div>' +
+        '<div class="mosaic-label">' + (loadedSceneNames[name] || name) + '</div>';
+      tile.addEventListener("dblclick", async () => {
+        closeScenesMosaic();
+        await loadSceneFromDisk(name);
+      });
+      scenesMosaicEl.appendChild(tile);
+      getSceneThumbURL(name).then(url => {
+        if (!url) return;
+        const img = document.createElement("img");
+        img.src = url;
+        tile.insertBefore(img, tile.firstChild);
+        const icon = tile.querySelector(".mosaic-placeholder-icon");
+        if (icon) icon.remove();
+      });
+    });
+
+    const addTile = document.createElement("div");
+    addTile.className = "mosaic-tile add-tile";
+    addTile.innerHTML = '<div class="plus-icon">➕</div><div>Glisse une image ici<br>ou clique pour créer</div>';
+    addTile.addEventListener("click", () => openNewSceneForm());
+    addTile.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      addTile.classList.add("drag-over");
+    });
+    addTile.addEventListener("dragleave", () => addTile.classList.remove("drag-over"));
+    addTile.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      addTile.classList.remove("drag-over");
+      const file = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!file || !/^image\//.test(file.type)) {
+        showToast("Dépose une image pour créer une scène.", true);
+        return;
+      }
+      openQuickSceneNameForm(file);
+    });
+    scenesMosaicEl.appendChild(addTile);
+  }
+
+  function openQuickSceneNameForm(bgFile) {
+    const overlay = document.createElement("div");
+    overlay.className = "zone-form-overlay";
+    overlay.innerHTML =
+      '<div class="zone-form">' +
+        '<h4>Nouvelle scène</h4>' +
+        '<label>Nom de la scène</label>' +
+        '<input type="text" id="qs-name" placeholder="Ex. Couloir de l\'hôpital">' +
+        '<div class="note">Image : ' + bgFile.name + '. Tu pourras ajouter une musique ensuite, depuis l\'édition.</div>' +
+        '<div class="form-actions">' +
+          '<button id="qs-cancel">Annuler</button>' +
+          '<button id="qs-create" class="primary">Créer la scène</button>' +
+        '</div>' +
+      '</div>';
+    scenesMosaicEl.appendChild(overlay);
+    const nameInput = overlay.querySelector("#qs-name");
+    nameInput.focus();
+    overlay.querySelector("#qs-cancel").addEventListener("click", () => overlay.remove());
+    overlay.querySelector("#qs-create").addEventListener("click", async () => {
+      const name = nameInput.value.trim();
+      if (!name) { nameInput.focus(); return; }
+      try {
+        await createSceneOnDisk(name, bgFile, null);
+        overlay.remove();
+        await scanScenes();
+        renderScenesMosaic();
+        showToast("Scène \"" + name + "\" créée.");
+      } catch (e) {
+        showToast("Échec de la création de la scène.", true);
+      }
+    });
+  }
+
+  function openScenesMosaic() {
+    scenesMosaicOpen = true;
+    scenesMosaicToggle.classList.add("active");
+    scenesMosaicEl.classList.remove("hidden");
+    renderScenesMosaic();
+  }
+
+  function closeScenesMosaic() {
+    scenesMosaicOpen = false;
+    scenesMosaicToggle.classList.remove("active");
+    scenesMosaicEl.classList.add("hidden");
+  }
+
+  scenesMosaicToggle.addEventListener("click", () => {
+    if (scenesMosaicOpen) closeScenesMosaic();
+    else openScenesMosaic();
+  });
 
   function openNewSceneForm() {
     const overlay = document.createElement("div");
@@ -2658,6 +2852,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       await scanNpcFolder();
       await scanMeteoFolder();
       await scanVracFolder();
+      updateMosaicToggleVisibility();
       broadcastState();
       render();
       loadScenarioDocConfig();
@@ -2727,23 +2922,11 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       delete loadedSceneNames[nameToDelete];
       clearCurrentScene();
       await scanScenes();
-      diskSceneSelect.value = "";
       broadcastState();
       render();
       showToast("Scène supprimée.");
     } catch (e) {
       showToast("Échec de la suppression.", true);
-    }
-  });
-
-  diskSceneSelect.addEventListener("change", async () => {
-    const val = diskSceneSelect.value;
-    if (!val) return;
-    if (val === "__new__") {
-      diskSceneSelect.value = currentSceneName || "";
-      openNewSceneForm();
-    } else {
-      await loadSceneFromDisk(val);
     }
   });
 
@@ -3364,6 +3547,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (state.mode === "player") requestStateFromPeers();
       if (state.mode !== "edit") cancelDrawing();
       closeNotesFloating();
+      closeScenesMosaic();
       updateDeleteBtnVisibility();
       render();
       if (weatherRain || weatherSnow) resizeWeatherCanvas();
@@ -3920,6 +4104,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     await scanNpcFolder();
     await scanMeteoFolder();
     await scanVracFolder();
+    updateMosaicToggleVisibility();
 
     document.querySelectorAll(".mode-switch button").forEach(b => b.classList.remove("active"));
     state.mode = "player";
