@@ -140,6 +140,11 @@
     max-width: 150px;
   }
   body.mode-player #weather-select { display: none; }
+  #rain-intensity {
+    width: 90px;
+    accent-color: var(--gold);
+  }
+  body.mode-player #rain-intensity { display: none !important; }
 
   #disk-delete-scene {
     background: none;
@@ -909,6 +914,7 @@
       <option value="rain">🌧️ Pluie</option>
       <option value="fog">🌫️ Brouillard</option>
     </select>
+    <input type="range" id="rain-intensity" min="10" max="100" value="50" title="Intensité de la pluie" style="display:none;">
     <button id="audio-toggle">🔈 Activer le son</button>
   </div>
 
@@ -1112,6 +1118,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   const npcObjectURLs = {};
   const SLOT_POSITIONS = ["12%", "88%", "38%", "62%"];
   let currentWeather = "none"; // none | rain | fog
+  let rainIntensity = 50; // 10-100
   let weatherAnimId = null;
   let rainDrops = [];
   const zoneAudioEls = {};
@@ -1165,7 +1172,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         music: currentSceneMeta.music,
         zones: cleanForSave(ZONES),
         activeNpcs: activeNpcOrder.slice(),
-        weather: currentWeather
+        weather: currentWeather,
+        rainIntensity: rainIntensity
       };
       await writeJsonIntoDir(currentSceneDirHandle, "scene.json", sceneData);
     } catch (e) {
@@ -1477,14 +1485,16 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   function initRainDrops() {
     const w = weatherCanvas.width, h = weatherCanvas.height;
-    const count = Math.max(40, Math.floor((w * h) / 9000));
+    const factor = rainIntensity / 50; // 1.0 à l'intensité par défaut (50)
+    const count = Math.max(10, Math.floor(((w * h) / 9000) * factor));
+    const speedBoost = 1 + (rainIntensity - 50) / 220; // pluie un peu plus rapide si intense
     rainDrops = [];
     for (let i = 0; i < count; i++) {
       rainDrops.push({
         x: Math.random() * w,
         y: Math.random() * h,
         len: 10 + Math.random() * 16,
-        speed: 5 + Math.random() * 6,
+        speed: (5 + Math.random() * 6) * speedBoost,
         opacity: 0.12 + Math.random() * 0.28
       });
     }
@@ -1568,9 +1578,11 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     stopWeatherAnim();
     weatherCanvas.style.display = "none";
     weatherFogEl.style.display = "none";
+    rainIntensityInput.style.display = "none";
     weatherCtx.clearRect(0, 0, weatherCanvas.width, weatherCanvas.height);
     if (currentWeather === "rain") {
       weatherCanvas.style.display = "block";
+      rainIntensityInput.style.display = (state.mode === "player") ? "none" : "inline-block";
       resizeWeatherCanvas();
       stepRain();
     } else if (currentWeather === "fog") {
@@ -1584,6 +1596,18 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     renderWeather();
     if (diskMode) saveSceneToDisk();
     broadcastState();
+  });
+
+  const rainIntensityInput = document.getElementById("rain-intensity");
+  let rainIntensitySaveTimeout = null;
+  rainIntensityInput.addEventListener("input", () => {
+    rainIntensity = parseInt(rainIntensityInput.value, 10) || 50;
+    if (currentWeather === "rain") initRainDrops();
+    broadcastState();
+    clearTimeout(rainIntensitySaveTimeout);
+    rainIntensitySaveTimeout = setTimeout(() => {
+      if (diskMode) saveSceneToDisk();
+    }, 500);
   });
 
   window.addEventListener("resize", () => {
@@ -1645,6 +1669,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
     currentWeather = sceneData.weather || "none";
     weatherSelect.value = currentWeather;
+    rainIntensity = sceneData.rainIntensity || 50;
+    rainIntensityInput.value = rainIntensity;
     renderWeather();
 
     state.sceneId = folderName;
@@ -1684,7 +1710,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       await writeFileIntoDir(musiquesDir, musicDestName, musicFile);
     }
 
-    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [], weather: "none" };
+    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [], weather: "none", rainIntensity: 50 };
     await writeJsonIntoDir(sceneDir, "scene.json", sceneData);
     return folderName;
   }
@@ -1767,6 +1793,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     activeNpcOrder = [];
     currentWeather = "none";
     weatherSelect.value = "none";
+    rainIntensity = 50;
+    rainIntensityInput.value = 50;
     renderWeather();
     diskDeleteBtn.style.display = "none";
     diskDeleteBtn.dataset.confirm = "";
@@ -2690,7 +2718,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       insertStack: state.insertStack,
       soundOn: state.soundOn,
       activeNpcOrder: activeNpcOrder,
-      weather: currentWeather
+      weather: currentWeather,
+      rainIntensity: rainIntensity
     });
   }
   function requestStateFromPeers() {
@@ -2708,10 +2737,13 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         state.insertStack = msg.insertStack;
         state.soundOn = msg.soundOn;
         activeNpcOrder = msg.activeNpcOrder || [];
+        if (typeof msg.rainIntensity === "number") rainIntensity = msg.rainIntensity;
         if (msg.weather && msg.weather !== currentWeather) {
           currentWeather = msg.weather;
           weatherSelect.value = currentWeather;
           renderWeather();
+        } else if (currentWeather === "rain") {
+          initRainDrops();
         }
         render();
         hydrateActiveNpcImages();
