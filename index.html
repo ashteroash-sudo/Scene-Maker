@@ -1388,6 +1388,17 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   musicAudioEl.loop = true;
   musicAudioEl.volume = musicVolume / 100;
 
+  // Coupe et oublie tous les sons de zone "superposé" en cours — à faire
+  // systématiquement avant de remplacer les zones d'une scène, sinon un
+  // son laissé allumé continue de jouer sur la scène suivante.
+  function stopAllZoneSounds() {
+    Object.keys(zoneAudioEls).forEach(id => {
+      try { zoneAudioEls[id].pause(); } catch (e) {}
+      delete zoneAudioEls[id];
+    });
+    state.soundOn = {};
+  }
+
   function fsApiSupported() {
     return "showDirectoryPicker" in window;
   }
@@ -2451,6 +2462,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     currentSceneMeta = { background: sceneData.background, music: sceneData.music };
     loadedSceneNames[folderName] = sceneData.name || folderName;
 
+    stopAllZoneSounds();
     ZONES.length = 0;
     (sceneData.zones || []).forEach(z => ZONES.push(z));
     await hydrateAssetURLs(ZONES, sceneDir);
@@ -2603,6 +2615,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     currentSceneDirHandle = null;
     currentSceneName = null;
     currentSceneMeta = { background: null, music: null };
+    stopAllZoneSounds();
     ZONES.length = 0;
     state.sceneId = null;
     state.insertStack = [];
