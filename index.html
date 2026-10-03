@@ -410,6 +410,17 @@
     z-index: 6;
     display: none;
   }
+  #weather-fog .fog-base {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(to top, rgba(255,255,255,0.24), rgba(255,255,255,0.05) 75%);
+    mix-blend-mode: screen;
+    animation: fog-base-pulse 15s ease-in-out infinite;
+  }
+  @keyframes fog-base-pulse {
+    0%, 100% { opacity: 0.55; }
+    50% { opacity: 0.85; }
+  }
   #weather-fog .patch {
     position: absolute;
     border-radius: 50%;
@@ -930,6 +941,7 @@
         <div id="npc-portrait-layer"></div>
         <canvas id="weather-canvas"></canvas>
         <div id="weather-fog">
+      <div class="fog-base"></div>
       <div class="patch p1"></div>
       <div class="patch p2"></div>
       <div class="patch p3"></div>
