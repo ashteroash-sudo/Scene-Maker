@@ -410,33 +410,56 @@
     z-index: 6;
     display: none;
   }
-  #weather-fog .layer {
+  #weather-fog .patch {
     position: absolute;
-    top: -25%;
-    left: -35%;
-    width: 170%;
-    height: 150%;
-    background:
-      radial-gradient(ellipse at 20% 50%, rgba(255,255,255,0.26), transparent 60%),
-      radial-gradient(ellipse at 70% 40%, rgba(255,255,255,0.19), transparent 55%),
-      radial-gradient(ellipse at 45% 75%, rgba(255,255,255,0.21), transparent 60%);
-    filter: blur(22px);
-    opacity: 0.55;
-    animation: fog-drift 20s ease-in-out infinite, fog-pulse 8s ease-in-out infinite;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(255,255,255,0.95), rgba(255,255,255,0) 68%);
+    filter: blur(18px);
+    mix-blend-mode: screen;
   }
-  #weather-fog .layer2 {
-    animation-duration: 29s, 11s;
-    animation-direction: reverse, normal;
-    opacity: 0.4;
+  #weather-fog .p1 {
+    top: 6%; left: 2%; width: 42%; height: 42%;
+    animation: fog-drift-a 19s ease-in-out infinite, fog-pulse-mid 13s ease-in-out infinite;
   }
-  @keyframes fog-drift {
-    0%   { transform: translate(-9%, -3%); }
-    50%  { transform: translate(9%, 3%); }
-    100% { transform: translate(-9%, -3%); }
+  #weather-fog .p2 {
+    top: 38%; left: 54%; width: 52%; height: 48%;
+    animation: fog-drift-b 25s ease-in-out infinite, fog-pulse-strong 17s ease-in-out infinite -6s;
   }
-  @keyframes fog-pulse {
-    0%, 100% { opacity: 0.45; }
-    50% { opacity: 0.72; }
+  #weather-fog .p3 {
+    top: 62%; left: 6%; width: 38%; height: 34%;
+    animation: fog-drift-c 15s ease-in-out infinite, fog-pulse-soft 10s ease-in-out infinite -3s;
+  }
+  #weather-fog .p4 {
+    top: 2%; left: 58%; width: 34%; height: 34%;
+    animation: fog-drift-a 22s ease-in-out infinite reverse, fog-pulse-soft 15s ease-in-out infinite -8s;
+  }
+  #weather-fog .p5 {
+    top: 46%; left: 24%; width: 46%; height: 40%;
+    animation: fog-drift-b 28s ease-in-out infinite reverse, fog-pulse-mid 12s ease-in-out infinite -4s;
+  }
+  @keyframes fog-drift-a {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(6%, -5%); }
+  }
+  @keyframes fog-drift-b {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(-7%, 4%); }
+  }
+  @keyframes fog-drift-c {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(5%, 6%); }
+  }
+  @keyframes fog-pulse-soft {
+    0%, 100% { opacity: 0.14; }
+    50% { opacity: 0.32; }
+  }
+  @keyframes fog-pulse-mid {
+    0%, 100% { opacity: 0.22; }
+    50% { opacity: 0.46; }
+  }
+  @keyframes fog-pulse-strong {
+    0%, 100% { opacity: 0.28; }
+    50% { opacity: 0.58; }
   }
 
   /* ---------- Portraits NPC (panneau "Personnages") ---------- */
@@ -906,7 +929,13 @@
         <div id="labels-layer"></div>
         <div id="npc-portrait-layer"></div>
         <canvas id="weather-canvas"></canvas>
-        <div id="weather-fog"><div class="layer layer1"></div><div class="layer layer2"></div></div>
+        <div id="weather-fog">
+      <div class="patch p1"></div>
+      <div class="patch p2"></div>
+      <div class="patch p3"></div>
+      <div class="patch p4"></div>
+      <div class="patch p5"></div>
+    </div>
         <div id="insert-layer"></div>
         <div class="hint" id="mode-hint"></div>
       </div>
