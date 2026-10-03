@@ -521,6 +521,9 @@
   .npc-portrait .npc-portrait-img {
     height: 100%;
     width: auto;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
     display: block;
     filter: drop-shadow(0 14px 28px rgba(0,0,0,0.65));
   }
@@ -1736,17 +1739,26 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     const others = hasSpeaker ? active.filter(f => f !== speakingNpc) : active;
     const ordered = hasSpeaker ? others.concat([speakingNpc]) : active; // le locuteur rendu en dernier (au-dessus)
 
+    // Plafond de largeur (en plus de la hauteur) : filet de sécurité pour
+    // qu'un détourage imparfait ou une pose très étalée ne fasse jamais
+    // "manger" l'écran à un personnage au détriment des autres.
+    const WIDTH_CAP_BY_COUNT = { 1: 40, 2: 30, 3: 24, 4: 24 };
+    const baseCap = WIDTH_CAP_BY_COUNT[active.length] || 24;
+
     ordered.forEach((fileName) => {
       const isSpeaking = hasSpeaker && fileName === speakingNpc;
-      let left;
+      let left, maxWidthPct;
       if (hasSpeaker) {
         left = isSpeaking ? "50%" : SPEAKER_SIDE_POSITIONS[others.indexOf(fileName)] || "50%";
+        maxWidthPct = isSpeaking ? 44 : 22;
       } else {
         left = SLOT_POSITIONS[active.indexOf(fileName)] || "50%";
+        maxWidthPct = baseCap;
       }
       const card = document.createElement("div");
       card.className = "npc-portrait" + (isSpeaking ? " speaking" : (hasSpeaker ? " dimmed" : ""));
       card.style.left = left;
+      card.style.maxWidth = maxWidthPct + "%";
       const url = npcObjectURLs[fileName];
       const entry = npcList.find(n => n.fileName === fileName);
       const displayName = entry ? entry.displayName : fileName;
