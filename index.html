@@ -130,6 +130,17 @@
     font-size: 0.8rem;
     max-width: 160px;
   }
+  #weather-select {
+    background: var(--bg-void);
+    border: 1px solid var(--panel-edge);
+    color: var(--ink);
+    border-radius: 8px;
+    padding: 6px 8px;
+    font-size: 0.8rem;
+    max-width: 150px;
+  }
+  body.mode-player #weather-select { display: none; }
+
   #disk-delete-scene {
     background: none;
     border: 1px solid var(--danger);
@@ -380,6 +391,53 @@
     z-index: 5;
   }
   .portrait-card .portrait-close:hover { color: var(--ink); border-color: var(--gold-soft); }
+
+  /* ---------- Effets météo ---------- */
+  #weather-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 6;
+    display: none;
+  }
+  #weather-fog {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+    z-index: 6;
+    display: none;
+  }
+  #weather-fog .layer {
+    position: absolute;
+    top: -25%;
+    left: -35%;
+    width: 170%;
+    height: 150%;
+    background:
+      radial-gradient(ellipse at 20% 50%, rgba(255,255,255,0.26), transparent 60%),
+      radial-gradient(ellipse at 70% 40%, rgba(255,255,255,0.19), transparent 55%),
+      radial-gradient(ellipse at 45% 75%, rgba(255,255,255,0.21), transparent 60%);
+    filter: blur(22px);
+    opacity: 0.55;
+    animation: fog-drift 20s ease-in-out infinite, fog-pulse 8s ease-in-out infinite;
+  }
+  #weather-fog .layer2 {
+    animation-duration: 29s, 11s;
+    animation-direction: reverse, normal;
+    opacity: 0.4;
+  }
+  @keyframes fog-drift {
+    0%   { transform: translate(-9%, -3%); }
+    50%  { transform: translate(9%, 3%); }
+    100% { transform: translate(-9%, -3%); }
+  }
+  @keyframes fog-pulse {
+    0%, 100% { opacity: 0.45; }
+    50% { opacity: 0.72; }
+  }
 
   /* ---------- Portraits NPC (panneau "Personnages") ---------- */
   #npc-portrait-layer {
@@ -832,6 +890,11 @@
     <button id="disk-delete-scene" style="display:none;">🗑️ Supprimer la scène</button>
     <div id="breadcrumb"></div>
     <button id="draw-toggle">✏️ Créer une zone</button>
+    <select id="weather-select" title="Effet météo">
+      <option value="none">🌦️ Météo : aucune</option>
+      <option value="rain">🌧️ Pluie</option>
+      <option value="fog">🌫️ Brouillard</option>
+    </select>
     <button id="audio-toggle">🔈 Activer le son</button>
   </div>
 
@@ -842,6 +905,8 @@
         <svg class="zones" id="zone-svg" viewBox="0 0 768 512" preserveAspectRatio="none"></svg>
         <div id="labels-layer"></div>
         <div id="npc-portrait-layer"></div>
+        <canvas id="weather-canvas"></canvas>
+        <div id="weather-fog"><div class="layer layer1"></div><div class="layer layer2"></div></div>
         <div id="insert-layer"></div>
         <div class="hint" id="mode-hint"></div>
       </div>
@@ -1027,6 +1092,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let activeNpcOrder = []; // fileNames, dans l'ordre d'activation
   const npcObjectURLs = {};
   const SLOT_POSITIONS = ["12%", "88%", "38%", "62%"];
+  let currentWeather = "none"; // none | rain | fog
+  let weatherAnimId = null;
+  let rainDrops = [];
   const zoneAudioEls = {};
   const musicAudioEl = new Audio();
   musicAudioEl.loop = true;
@@ -1077,7 +1145,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         background: currentSceneMeta.background,
         music: currentSceneMeta.music,
         zones: cleanForSave(ZONES),
-        activeNpcs: activeNpcOrder.slice()
+        activeNpcs: activeNpcOrder.slice(),
+        weather: currentWeather
       };
       await writeJsonIntoDir(currentSceneDirHandle, "scene.json", sceneData);
     } catch (e) {
@@ -1366,6 +1435,88 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   document.getElementById("npc-refresh").addEventListener("click", scanNpcFolder);
 
+  // ---------------------------------------------------------------
+  // Effets météo (calque au-dessus de la scène — pluie / brouillard)
+  // ---------------------------------------------------------------
+
+  const weatherCanvas = document.getElementById("weather-canvas");
+  const weatherCtx = weatherCanvas.getContext("2d");
+  const weatherFogEl = document.getElementById("weather-fog");
+  const weatherSelect = document.getElementById("weather-select");
+
+  function stopWeatherAnim() {
+    if (weatherAnimId) { cancelAnimationFrame(weatherAnimId); weatherAnimId = null; }
+  }
+
+  function resizeWeatherCanvas() {
+    const stageEl = document.getElementById("stage");
+    const rect = stageEl.getBoundingClientRect();
+    weatherCanvas.width = Math.max(1, Math.round(rect.width));
+    weatherCanvas.height = Math.max(1, Math.round(rect.height));
+    if (currentWeather === "rain") initRainDrops();
+  }
+
+  function initRainDrops() {
+    const w = weatherCanvas.width, h = weatherCanvas.height;
+    const count = Math.max(40, Math.floor((w * h) / 9000));
+    rainDrops = [];
+    for (let i = 0; i < count; i++) {
+      rainDrops.push({
+        x: Math.random() * w,
+        y: Math.random() * h,
+        len: 10 + Math.random() * 16,
+        speed: 5 + Math.random() * 6,
+        opacity: 0.12 + Math.random() * 0.28
+      });
+    }
+  }
+
+  function stepRain() {
+    const w = weatherCanvas.width, h = weatherCanvas.height;
+    weatherCtx.clearRect(0, 0, w, h);
+    weatherCtx.strokeStyle = "rgba(200, 220, 255, 0.6)";
+    weatherCtx.lineWidth = 1;
+    const slant = 0.22;
+    for (const d of rainDrops) {
+      weatherCtx.globalAlpha = d.opacity;
+      weatherCtx.beginPath();
+      weatherCtx.moveTo(d.x, d.y);
+      weatherCtx.lineTo(d.x - d.len * slant, d.y - d.len);
+      weatherCtx.stroke();
+      d.y += d.speed;
+      d.x -= d.speed * slant * 0.5;
+      if (d.y > h) { d.y = -10; d.x = Math.random() * w; }
+      if (d.x < -20) d.x = w + 20;
+    }
+    weatherCtx.globalAlpha = 1;
+    weatherAnimId = requestAnimationFrame(stepRain);
+  }
+
+  function renderWeather() {
+    stopWeatherAnim();
+    weatherCanvas.style.display = "none";
+    weatherFogEl.style.display = "none";
+    weatherCtx.clearRect(0, 0, weatherCanvas.width, weatherCanvas.height);
+    if (currentWeather === "rain") {
+      weatherCanvas.style.display = "block";
+      resizeWeatherCanvas();
+      stepRain();
+    } else if (currentWeather === "fog") {
+      weatherFogEl.style.display = "block";
+    }
+  }
+
+  weatherSelect.addEventListener("change", () => {
+    currentWeather = weatherSelect.value;
+    renderWeather();
+    if (diskMode) saveSceneToDisk();
+    broadcastState();
+  });
+
+  window.addEventListener("resize", () => {
+    if (currentWeather === "rain") resizeWeatherCanvas();
+  });
+
 
   async function loadSceneFromDisk(folderName) {
     let sceneDir;
@@ -1419,6 +1570,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
     activeNpcOrder = Array.isArray(sceneData.activeNpcs) ? sceneData.activeNpcs.slice() : [];
 
+    currentWeather = sceneData.weather || "none";
+    weatherSelect.value = currentWeather;
+    renderWeather();
+
     state.sceneId = folderName;
     state.insertStack = [];
     state.selectedZoneId = null;
@@ -1456,7 +1611,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       await writeFileIntoDir(musiquesDir, musicDestName, musicFile);
     }
 
-    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [] };
+    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [], weather: "none" };
     await writeJsonIntoDir(sceneDir, "scene.json", sceneData);
     return folderName;
   }
@@ -1537,6 +1692,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     state.insertStack = [];
     state.selectedZoneId = null;
     activeNpcOrder = [];
+    currentWeather = "none";
+    weatherSelect.value = "none";
+    renderWeather();
     diskDeleteBtn.style.display = "none";
     diskDeleteBtn.dataset.confirm = "";
   }
@@ -2188,6 +2346,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (state.mode !== "edit") cancelDrawing();
       closeNotesFloating();
       render();
+      if (currentWeather === "rain") resizeWeatherCanvas();
     });
   });
 
@@ -2457,7 +2616,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       sceneId: state.sceneId,
       insertStack: state.insertStack,
       soundOn: state.soundOn,
-      activeNpcOrder: activeNpcOrder
+      activeNpcOrder: activeNpcOrder,
+      weather: currentWeather
     });
   }
   function requestStateFromPeers() {
@@ -2475,6 +2635,11 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         state.insertStack = msg.insertStack;
         state.soundOn = msg.soundOn;
         activeNpcOrder = msg.activeNpcOrder || [];
+        if (msg.weather && msg.weather !== currentWeather) {
+          currentWeather = msg.weather;
+          weatherSelect.value = currentWeather;
+          renderWeather();
+        }
         render();
         hydrateActiveNpcImages();
       }
