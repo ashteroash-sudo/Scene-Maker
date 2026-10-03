@@ -491,6 +491,33 @@
     display: flex;
     align-items: flex-end;
   }
+  .npc-portrait.speaking {
+    height: 94%;
+    z-index: 12;
+  }
+  .npc-portrait.speaking .npc-portrait-img {
+    filter: drop-shadow(0 14px 28px rgba(0,0,0,0.65)) drop-shadow(0 0 20px rgba(201,169,97,0.55));
+  }
+  .npc-portrait.dimmed {
+    height: 80%;
+    z-index: 6;
+  }
+  .npc-portrait.dimmed .npc-portrait-img {
+    filter: brightness(0.5) saturate(0.5);
+  }
+  .npc-emote-badge {
+    position: absolute;
+    top: -6px;
+    left: 50%;
+    transform: translate(-50%, -100%);
+    font-size: 1.8rem;
+    animation: emote-pop 0.3s ease-out;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.6));
+  }
+  @keyframes emote-pop {
+    0% { opacity: 0; transform: translate(-50%, -80%) scale(0.6); }
+    100% { opacity: 1; transform: translate(-50%, -100%) scale(1); }
+  }
   .npc-portrait .npc-portrait-img {
     height: 100%;
     width: auto;
@@ -581,6 +608,47 @@
   }
   .npc-row:hover { background: rgba(255,255,255,0.03); }
   .npc-row input[type="checkbox"] { cursor: pointer; }
+  .npc-row-wrap {
+    display: flex;
+    align-items: center;
+    padding-right: 10px;
+  }
+  .npc-row-wrap .npc-row { flex: 1; padding-right: 4px; }
+  .npc-speak-btn, .npc-emote-btn {
+    background: none;
+    border: 1px solid transparent;
+    color: var(--ink-dim);
+    border-radius: 6px;
+    width: 26px;
+    height: 26px;
+    font-size: 0.82rem;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .npc-speak-btn:hover, .npc-emote-btn:hover { border-color: var(--panel-edge); }
+  .npc-speak-btn.active { border-color: var(--gold); background: var(--gold-soft); }
+  .emote-picker {
+    position: absolute;
+    display: flex;
+    gap: 2px;
+    background: var(--panel);
+    border: 1px solid var(--gold-soft);
+    border-radius: 8px;
+    padding: 4px;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.5);
+    z-index: 50;
+    margin-left: -140px;
+    margin-top: -40px;
+  }
+  .emote-picker button {
+    background: none;
+    border: none;
+    font-size: 1.1rem;
+    padding: 4px 5px;
+    cursor: pointer;
+    border-radius: 6px;
+  }
+  .emote-picker button:hover { background: rgba(255,255,255,0.08); }
   .accordion-item {
     border-bottom: 1px solid var(--panel-edge);
   }
@@ -1164,6 +1232,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let npcDirHandle = null;
   let npcList = []; // { fileName, displayName }
   let activeNpcOrder = []; // fileNames, dans l'ordre d'activation
+  let speakingNpc = null; // fileName du personnage mis en avant, ou null
+  const npcEmotes = {}; // fileName -> { emoji, expiresAt, timeoutId }
+  const EMOTE_CHOICES = ["😠", "😢", "😨", "❤️", "❗", "💭"];
+  const SPEAKER_SIDE_POSITIONS = ["14%", "86%", "27%"];
   const npcObjectURLs = {};
   const SLOT_POSITIONS = ["12%", "88%", "38%", "62%"];
   let weatherRain = false;
@@ -1539,11 +1611,26 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       return;
     }
     el.innerHTML = npcList.map(n => {
+      const fname = escapeAttr(n.fileName);
       const checked = activeNpcOrder.includes(n.fileName) ? "checked" : "";
-      return '<label class="npc-row"><span>' + n.displayName + '</span><input type="checkbox" data-fname="' + escapeAttr(n.fileName) + '" ' + checked + '></label>';
+      const isSpeaking = speakingNpc === n.fileName;
+      const extraBtns = activeNpcOrder.includes(n.fileName)
+        ? '<button class="npc-speak-btn' + (isSpeaking ? " active" : "") + '" data-fname="' + fname + '" title="Définir comme locuteur">🗣️</button>' +
+          '<button class="npc-emote-btn" data-fname="' + fname + '" title="Envoyer une émotion">😊</button>'
+        : "";
+      return '<div class="npc-row-wrap">' +
+        '<label class="npc-row"><input type="checkbox" data-fname="' + fname + '" ' + checked + '><span>' + n.displayName + '</span></label>' +
+        extraBtns +
+      '</div>';
     }).join("");
     el.querySelectorAll("input[type=checkbox]").forEach(cb => {
       cb.addEventListener("change", () => toggleNpc(cb.dataset.fname, cb.checked));
+    });
+    el.querySelectorAll(".npc-speak-btn").forEach(btn => {
+      btn.addEventListener("click", () => toggleSpeaker(btn.dataset.fname));
+    });
+    el.querySelectorAll(".npc-emote-btn").forEach(btn => {
+      btn.addEventListener("click", (e) => { e.stopPropagation(); openEmotePicker(btn); });
     });
   }
 
@@ -1560,24 +1647,112 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       }
     } else {
       activeNpcOrder = activeNpcOrder.filter(f => f !== fileName);
+      if (speakingNpc === fileName) speakingNpc = null;
+      clearNpcEmote(fileName);
     }
     if (diskMode) saveSceneToDisk();
     broadcastState();
     renderNpcPortraits();
+    renderNpcChecklist();
+  }
+
+  function toggleSpeaker(fileName) {
+    speakingNpc = (speakingNpc === fileName) ? null : fileName;
+    broadcastState();
+    renderNpcPortraits();
+    renderNpcChecklist();
+  }
+
+  function clearNpcEmote(fileName) {
+    const e = npcEmotes[fileName];
+    if (e && e.timeoutId) clearTimeout(e.timeoutId);
+    delete npcEmotes[fileName];
+  }
+
+  function setNpcEmote(fileName, emoji, durationMs) {
+    clearNpcEmote(fileName);
+    const expiresAt = Date.now() + durationMs;
+    const timeoutId = setTimeout(() => {
+      delete npcEmotes[fileName];
+      renderNpcPortraits();
+    }, durationMs);
+    npcEmotes[fileName] = { emoji, expiresAt, timeoutId };
+  }
+
+  function triggerEmote(fileName, emoji) {
+    setNpcEmote(fileName, emoji, 4000);
+    broadcastState();
+    renderNpcPortraits();
+  }
+
+  // Applique les émotions reçues de l'autre fenêtre, avec une expiration
+  // calée sur l'horodatage absolu (pas sur une durée fixe) pour rester
+  // synchronisé même avec un peu de latence.
+  function applyRemoteNpcEmotes(remoteEmotes) {
+    Object.keys(npcEmotes).forEach(fname => {
+      if (!remoteEmotes[fname]) clearNpcEmote(fname);
+    });
+    Object.entries(remoteEmotes).forEach(([fname, data]) => {
+      const remaining = data.expiresAt - Date.now();
+      if (remaining <= 0) { clearNpcEmote(fname); return; }
+      const existing = npcEmotes[fname];
+      if (existing && existing.expiresAt === data.expiresAt && existing.emoji === data.emoji) return;
+      clearNpcEmote(fname);
+      const timeoutId = setTimeout(() => {
+        delete npcEmotes[fname];
+        renderNpcPortraits();
+      }, remaining);
+      npcEmotes[fname] = { emoji: data.emoji, expiresAt: data.expiresAt, timeoutId };
+    });
+  }
+
+  function openEmotePicker(btn) {
+    const existing = document.querySelector(".emote-picker");
+    if (existing) existing.remove();
+    const picker = document.createElement("div");
+    picker.className = "emote-picker";
+    picker.innerHTML = EMOTE_CHOICES.map(e => '<button type="button">' + e + '</button>').join("");
+    picker.querySelectorAll("button").forEach((b, i) => {
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        triggerEmote(btn.dataset.fname, EMOTE_CHOICES[i]);
+        picker.remove();
+      });
+    });
+    btn.parentElement.appendChild(picker);
+    setTimeout(() => {
+      document.addEventListener("click", function closeOnce() {
+        picker.remove();
+        document.removeEventListener("click", closeOnce);
+      }, { once: true });
+    }, 0);
   }
 
   function renderNpcPortraits() {
     const layer = document.getElementById("npc-portrait-layer");
     layer.innerHTML = "";
     const active = activeNpcOrder.slice(0, 4);
-    active.forEach((fileName, i) => {
+    const hasSpeaker = speakingNpc && active.includes(speakingNpc);
+    const others = hasSpeaker ? active.filter(f => f !== speakingNpc) : active;
+    const ordered = hasSpeaker ? others.concat([speakingNpc]) : active; // le locuteur rendu en dernier (au-dessus)
+
+    ordered.forEach((fileName) => {
+      const isSpeaking = hasSpeaker && fileName === speakingNpc;
+      let left;
+      if (hasSpeaker) {
+        left = isSpeaking ? "50%" : SPEAKER_SIDE_POSITIONS[others.indexOf(fileName)] || "50%";
+      } else {
+        left = SLOT_POSITIONS[active.indexOf(fileName)] || "50%";
+      }
       const card = document.createElement("div");
-      card.className = "npc-portrait";
-      card.style.left = SLOT_POSITIONS[i];
+      card.className = "npc-portrait" + (isSpeaking ? " speaking" : (hasSpeaker ? " dimmed" : ""));
+      card.style.left = left;
       const url = npcObjectURLs[fileName];
       const entry = npcList.find(n => n.fileName === fileName);
       const displayName = entry ? entry.displayName : fileName;
+      const emote = npcEmotes[fileName];
       card.innerHTML =
+        (emote ? '<div class="npc-emote-badge">' + emote.emoji + '</div>' : "") +
         (url ? '<img class="npc-portrait-img" src="' + url + '">' : '<div class="npc-portrait-placeholder"><div class="icon">🧍</div></div>') +
         '<div class="portrait-name">' + displayName + '</div>';
       layer.appendChild(card);
@@ -1926,6 +2101,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     await hydrateAssetURLs(ZONES, sceneDir);
 
     activeNpcOrder = Array.isArray(sceneData.activeNpcs) ? sceneData.activeNpcs.slice() : [];
+    speakingNpc = null;
+    Object.keys(npcEmotes).forEach(clearNpcEmote);
 
     if (typeof sceneData.weatherRain === "boolean" || typeof sceneData.weatherFog === "boolean") {
       weatherRain = !!sceneData.weatherRain;
@@ -2079,6 +2256,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     state.insertStack = [];
     state.selectedZoneId = null;
     activeNpcOrder = [];
+    speakingNpc = null;
+    Object.keys(npcEmotes).forEach(clearNpcEmote);
     weatherRain = false;
     weatherSnow = false;
     weatherFog = false;
@@ -3062,6 +3241,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       insertStack: state.insertStack,
       soundOn: state.soundOn,
       activeNpcOrder: activeNpcOrder,
+      speakingNpc: speakingNpc,
+      npcEmotes: Object.fromEntries(Object.entries(npcEmotes).map(([k, v]) => [k, { emoji: v.emoji, expiresAt: v.expiresAt }])),
       weatherRain: weatherRain,
       weatherSnow: weatherSnow,
       weatherFog: weatherFog,
@@ -3094,6 +3275,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         state.insertStack = msg.insertStack;
         state.soundOn = msg.soundOn;
         activeNpcOrder = msg.activeNpcOrder || [];
+        speakingNpc = msg.speakingNpc || null;
+        applyRemoteNpcEmotes(msg.npcEmotes || {});
         if (typeof msg.rainIntensity === "number") rainIntensity = msg.rainIntensity;
         if (typeof msg.snowIntensity === "number") snowIntensity = msg.snowIntensity;
         if (typeof msg.musicVolume === "number" && msg.musicVolume !== musicVolume) {
