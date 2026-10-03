@@ -130,21 +130,34 @@
     font-size: 0.8rem;
     max-width: 160px;
   }
-  #weather-select {
+  .weather-check {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
     background: var(--bg-void);
     border: 1px solid var(--panel-edge);
-    color: var(--ink);
+    color: var(--ink-dim);
     border-radius: 8px;
-    padding: 6px 8px;
-    font-size: 0.8rem;
-    max-width: 150px;
+    padding: 5px 9px;
+    font-size: 0.85rem;
+    cursor: pointer;
   }
-  body.mode-player #weather-select { display: none; }
+  .weather-check:has(input:checked) {
+    border-color: var(--gold-soft);
+    color: var(--gold);
+  }
+  .weather-check input { accent-color: var(--gold); cursor: pointer; }
+  body.mode-player .weather-check { display: none; }
   #rain-intensity {
     width: 90px;
     accent-color: var(--gold);
   }
   body.mode-player #rain-intensity { display: none !important; }
+  #music-volume {
+    width: 80px;
+    accent-color: var(--gold);
+  }
+  body.mode-player #music-volume { display: none !important; }
 
   #disk-delete-scene {
     background: none;
@@ -909,13 +922,11 @@
     <button id="disk-delete-scene" style="display:none;">🗑️ Supprimer la scène</button>
     <div id="breadcrumb"></div>
     <button id="draw-toggle">✏️ Créer une zone</button>
-    <select id="weather-select" title="Effet météo">
-      <option value="none">🌦️ Météo : aucune</option>
-      <option value="rain">🌧️ Pluie</option>
-      <option value="fog">🌫️ Brouillard</option>
-    </select>
+    <label class="weather-check" title="Pluie"><input type="checkbox" id="weather-rain-toggle"> 🌧️</label>
+    <label class="weather-check" title="Brouillard"><input type="checkbox" id="weather-fog-toggle"> 🌫️</label>
     <input type="range" id="rain-intensity" min="10" max="100" value="50" title="Intensité de la pluie" style="display:none;">
     <button id="audio-toggle">🔈 Activer le son</button>
+    <input type="range" id="music-volume" min="0" max="100" value="70" title="Volume de la musique">
   </div>
 
   <div id="body-layout">
@@ -1117,13 +1128,16 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let activeNpcOrder = []; // fileNames, dans l'ordre d'activation
   const npcObjectURLs = {};
   const SLOT_POSITIONS = ["12%", "88%", "38%", "62%"];
-  let currentWeather = "none"; // none | rain | fog
+  let weatherRain = false;
+  let weatherFog = false;
   let rainIntensity = 50; // 10-100
+  let musicVolume = 70; // 0-100
   let weatherAnimId = null;
   let rainDrops = [];
   const zoneAudioEls = {};
   const musicAudioEl = new Audio();
   musicAudioEl.loop = true;
+  musicAudioEl.volume = musicVolume / 100;
 
   function fsApiSupported() {
     return "showDirectoryPicker" in window;
@@ -1172,8 +1186,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         music: currentSceneMeta.music,
         zones: cleanForSave(ZONES),
         activeNpcs: activeNpcOrder.slice(),
-        weather: currentWeather,
-        rainIntensity: rainIntensity
+        weatherRain: weatherRain,
+        weatherFog: weatherFog,
+        rainIntensity: rainIntensity,
+        musicVolume: musicVolume
       };
       await writeJsonIntoDir(currentSceneDirHandle, "scene.json", sceneData);
     } catch (e) {
@@ -1469,7 +1485,6 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   const weatherCanvas = document.getElementById("weather-canvas");
   const weatherCtx = weatherCanvas.getContext("2d");
   const weatherFogEl = document.getElementById("weather-fog");
-  const weatherSelect = document.getElementById("weather-select");
 
   function stopWeatherAnim() {
     if (weatherAnimId) { cancelAnimationFrame(weatherAnimId); weatherAnimId = null; }
@@ -1480,7 +1495,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     const rect = stageEl.getBoundingClientRect();
     weatherCanvas.width = Math.max(1, Math.round(rect.width));
     weatherCanvas.height = Math.max(1, Math.round(rect.height));
-    if (currentWeather === "rain") initRainDrops();
+    if (weatherRain) initRainDrops();
   }
 
   function initRainDrops() {
@@ -1585,19 +1600,30 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     weatherFogEl.style.display = "none";
     rainIntensityInput.style.display = "none";
     weatherCtx.clearRect(0, 0, weatherCanvas.width, weatherCanvas.height);
-    if (currentWeather === "rain") {
+    if (weatherRain) {
       weatherCanvas.style.display = "block";
       rainIntensityInput.style.display = (state.mode === "player") ? "none" : "inline-block";
       resizeWeatherCanvas();
       stepRain();
-    } else if (currentWeather === "fog") {
+    }
+    if (weatherFog) {
       ensureFogTextures();
       weatherFogEl.style.display = "block";
     }
   }
 
-  weatherSelect.addEventListener("change", () => {
-    currentWeather = weatherSelect.value;
+  const weatherRainToggle = document.getElementById("weather-rain-toggle");
+  const weatherFogToggle = document.getElementById("weather-fog-toggle");
+
+  weatherRainToggle.addEventListener("change", () => {
+    weatherRain = weatherRainToggle.checked;
+    renderWeather();
+    if (diskMode) saveSceneToDisk();
+    broadcastState();
+  });
+
+  weatherFogToggle.addEventListener("change", () => {
+    weatherFog = weatherFogToggle.checked;
     renderWeather();
     if (diskMode) saveSceneToDisk();
     broadcastState();
@@ -1607,7 +1633,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let rainIntensitySaveTimeout = null;
   rainIntensityInput.addEventListener("input", () => {
     rainIntensity = parseInt(rainIntensityInput.value, 10) || 50;
-    if (currentWeather === "rain") initRainDrops();
+    if (weatherRain) initRainDrops();
     broadcastState();
     clearTimeout(rainIntensitySaveTimeout);
     rainIntensitySaveTimeout = setTimeout(() => {
@@ -1615,8 +1641,21 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     }, 500);
   });
 
+  const musicVolumeInput = document.getElementById("music-volume");
+  let musicVolumeSaveTimeout = null;
+  musicVolumeInput.addEventListener("input", () => {
+    musicVolume = parseInt(musicVolumeInput.value, 10);
+    if (isNaN(musicVolume)) musicVolume = 70;
+    musicAudioEl.volume = musicVolume / 100;
+    broadcastState();
+    clearTimeout(musicVolumeSaveTimeout);
+    musicVolumeSaveTimeout = setTimeout(() => {
+      if (diskMode) saveSceneToDisk();
+    }, 500);
+  });
+
   window.addEventListener("resize", () => {
-    if (currentWeather === "rain") resizeWeatherCanvas();
+    if (weatherRain) resizeWeatherCanvas();
   });
 
 
@@ -1672,10 +1711,21 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
     activeNpcOrder = Array.isArray(sceneData.activeNpcs) ? sceneData.activeNpcs.slice() : [];
 
-    currentWeather = sceneData.weather || "none";
-    weatherSelect.value = currentWeather;
+    if (typeof sceneData.weatherRain === "boolean" || typeof sceneData.weatherFog === "boolean") {
+      weatherRain = !!sceneData.weatherRain;
+      weatherFog = !!sceneData.weatherFog;
+    } else {
+      // ancien format (un seul effet à la fois) : on migre en douceur
+      weatherRain = sceneData.weather === "rain";
+      weatherFog = sceneData.weather === "fog";
+    }
+    weatherRainToggle.checked = weatherRain;
+    weatherFogToggle.checked = weatherFog;
     rainIntensity = sceneData.rainIntensity || 50;
     rainIntensityInput.value = rainIntensity;
+    musicVolume = (typeof sceneData.musicVolume === "number") ? sceneData.musicVolume : 70;
+    musicVolumeInput.value = musicVolume;
+    musicAudioEl.volume = musicVolume / 100;
     renderWeather();
 
     state.sceneId = folderName;
@@ -1715,7 +1765,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       await writeFileIntoDir(musiquesDir, musicDestName, musicFile);
     }
 
-    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [], weather: "none", rainIntensity: 50 };
+    const sceneData = { name: name, background: bgDestName, music: musicDestName, zones: [], activeNpcs: [], weatherRain: false, weatherFog: false, rainIntensity: 50, musicVolume: 70 };
     await writeJsonIntoDir(sceneDir, "scene.json", sceneData);
     return folderName;
   }
@@ -1796,10 +1846,15 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     state.insertStack = [];
     state.selectedZoneId = null;
     activeNpcOrder = [];
-    currentWeather = "none";
-    weatherSelect.value = "none";
+    weatherRain = false;
+    weatherFog = false;
+    weatherRainToggle.checked = false;
+    weatherFogToggle.checked = false;
     rainIntensity = 50;
     rainIntensityInput.value = 50;
+    musicVolume = 70;
+    musicVolumeInput.value = 70;
+    musicAudioEl.volume = 0.7;
     renderWeather();
     diskDeleteBtn.style.display = "none";
     diskDeleteBtn.dataset.confirm = "";
@@ -2452,7 +2507,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (state.mode !== "edit") cancelDrawing();
       closeNotesFloating();
       render();
-      if (currentWeather === "rain") resizeWeatherCanvas();
+      if (weatherRain) resizeWeatherCanvas();
     });
   });
 
@@ -2723,8 +2778,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       insertStack: state.insertStack,
       soundOn: state.soundOn,
       activeNpcOrder: activeNpcOrder,
-      weather: currentWeather,
-      rainIntensity: rainIntensity
+      weatherRain: weatherRain,
+      weatherFog: weatherFog,
+      rainIntensity: rainIntensity,
+      musicVolume: musicVolume
     });
   }
   function requestStateFromPeers() {
@@ -2751,11 +2808,20 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         state.soundOn = msg.soundOn;
         activeNpcOrder = msg.activeNpcOrder || [];
         if (typeof msg.rainIntensity === "number") rainIntensity = msg.rainIntensity;
-        if (msg.weather && msg.weather !== currentWeather) {
-          currentWeather = msg.weather;
-          weatherSelect.value = currentWeather;
+        if (typeof msg.musicVolume === "number" && msg.musicVolume !== musicVolume) {
+          musicVolume = msg.musicVolume;
+          musicVolumeInput.value = musicVolume;
+          musicAudioEl.volume = musicVolume / 100;
+        }
+        const weatherChanged = (typeof msg.weatherRain === "boolean" && msg.weatherRain !== weatherRain) ||
+                                (typeof msg.weatherFog === "boolean" && msg.weatherFog !== weatherFog);
+        if (typeof msg.weatherRain === "boolean") weatherRain = msg.weatherRain;
+        if (typeof msg.weatherFog === "boolean") weatherFog = msg.weatherFog;
+        weatherRainToggle.checked = weatherRain;
+        weatherFogToggle.checked = weatherFog;
+        if (weatherChanged || sceneChanged) {
           renderWeather();
-        } else if (currentWeather === "rain") {
+        } else if (weatherRain) {
           initRainDrops();
         }
         render();
