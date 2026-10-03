@@ -1281,7 +1281,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     diskSceneSelect.appendChild(optEmpty);
     try {
       for await (const [name, handle] of rootDirHandle.entries()) {
-        if (handle.kind === "directory" && name !== "npc") {
+        if (handle.kind === "directory" && name !== "npc" && name !== "meteo") {
           scenesList.push(name);
           const opt = document.createElement("option");
           opt.value = name;
