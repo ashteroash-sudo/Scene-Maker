@@ -432,13 +432,13 @@
     will-change: transform;
   }
   #weather-fog .n1 {
-    filter: url(#fogNoise1) blur(1px);
-    opacity: 0.4;
+    filter: url(#fogNoise1) blur(3px);
+    opacity: 0.34;
     animation: fog-sweep-a 46s linear infinite;
   }
   #weather-fog .n2 {
-    filter: url(#fogNoise2) blur(1px);
-    opacity: 0.3;
+    filter: url(#fogNoise2) blur(3px);
+    opacity: 0.26;
     animation: fog-sweep-b 64s linear infinite;
   }
   @keyframes fog-sweep-a {
@@ -892,20 +892,20 @@
 <svg width="0" height="0" style="position:absolute">
   <defs>
     <filter id="fogNoise1" x="-50%" y="-50%" width="200%" height="200%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.010 0.018" numOctaves="4" seed="7" result="n" stitchTiles="stitch"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.028 0.045" numOctaves="5" seed="7" result="n" stitchTiles="stitch"/>
       <feColorMatrix in="n" type="matrix"
         values="0 0 0 0 1
                 0 0 0 0 1
                 0 0 0 0 1
-                0 0 0 1.4 -0.35"/>
+                0 0 0 0.55 0.02"/>
     </filter>
     <filter id="fogNoise2" x="-50%" y="-50%" width="200%" height="200%">
-      <feTurbulence type="fractalNoise" baseFrequency="0.016 0.009" numOctaves="4" seed="42" result="n" stitchTiles="stitch"/>
+      <feTurbulence type="fractalNoise" baseFrequency="0.040 0.024" numOctaves="5" seed="42" result="n" stitchTiles="stitch"/>
       <feColorMatrix in="n" type="matrix"
         values="0 0 0 0 1
                 0 0 0 0 1
                 0 0 0 0 1
-                0 0 0 1.4 -0.35"/>
+                0 0 0 0.55 0.02"/>
     </filter>
   </defs>
 </svg>
