@@ -2727,12 +2727,20 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     bc.postMessage({ type: "request-state" });
   }
   if (bc) {
-    bc.onmessage = (ev) => {
+    bc.onmessage = async (ev) => {
       const msg = ev.data;
       if (!msg) return;
       if (msg.type === "request-state" && state.mode !== "player") {
         broadcastState();
       } else if (msg.type === "state" && state.mode === "player") {
+        // si la scène a changé côté MJ, on va la charger nous-mêmes depuis
+        // le disque (chaque onglet a sa propre lecture du dossier) avant
+        // d'appliquer le reste de l'état — sinon le fond/les zones restent
+        // figés sur l'ancienne scène.
+        const sceneChanged = diskMode && msg.sceneId && msg.sceneId !== currentSceneName;
+        if (sceneChanged) {
+          await loadSceneFromDisk(msg.sceneId);
+        }
         state.sceneId = msg.sceneId;
         state.insertStack = msg.insertStack;
         state.soundOn = msg.soundOn;
