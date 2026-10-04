@@ -514,52 +514,18 @@
     15% { opacity: 0.85; }
     100% { transform: translate(var(--dx, 8%), -230%) scale(1.9); opacity: 0; }
   }
-  /* feu */
+  /* feu (particules sur canvas + halo chaud en CSS) */
   .fx-fire { mix-blend-mode: screen; }
+  .fx-fire .fire-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
   .fx-fire .fire-glow {
     position: absolute;
-    left: -45%; right: -45%; top: -25%; bottom: -35%;
     border-radius: 50%;
-    background: radial-gradient(closest-side, rgba(var(--c), 0.65), rgba(var(--c), 0.22) 55%, rgba(var(--c), 0) 100%);
+    background: radial-gradient(closest-side, rgba(var(--c), 0.55), rgba(var(--c), 0.18) 55%, rgba(var(--c), 0) 100%);
     animation: fx-fire-glow 1.4s ease-in-out infinite alternate;
-  }
-  .fx-fire .flames { position: absolute; inset: 0; filter: blur(1.6px); }
-  .fx-fire .tongue {
-    position: absolute;
-    bottom: 0;
-    transform-origin: 50% 100%;
-    background:
-      radial-gradient(ellipse 48% 42% at 50% 90%, rgba(var(--c2), 1) 0%, rgba(var(--c2), 0) 100%),
-      linear-gradient(to top, rgba(var(--c), 1) 0%, rgba(var(--c), 0.92) 40%, rgba(var(--c), 0.55) 75%, rgba(var(--c), 0) 100%);
-    animation: fx-flame 0.9s ease-in-out infinite alternate;
-  }
-  .fx-fire .tongue.shape-0 { clip-path: polygon(50% 0%, 58% 14%, 67% 30%, 77% 48%, 85% 66%, 89% 82%, 81% 94%, 66% 100%, 34% 100%, 19% 94%, 11% 82%, 15% 66%, 23% 48%, 33% 30%, 42% 14%); }
-  .fx-fire .tongue.shape-1 { clip-path: polygon(62% 0%, 66% 12%, 72% 28%, 80% 46%, 87% 64%, 90% 82%, 80% 95%, 66% 100%, 34% 100%, 18% 94%, 10% 80%, 16% 62%, 26% 44%, 38% 26%, 50% 12%); }
-  .fx-fire .tongue.shape-2 { clip-path: polygon(38% 0%, 34% 12%, 28% 28%, 20% 46%, 13% 64%, 10% 82%, 20% 95%, 34% 100%, 66% 100%, 82% 94%, 90% 80%, 84% 62%, 74% 44%, 62% 26%, 50% 12%); }
-  .fx-fire .ember {
-    position: absolute;
-    bottom: 30%;
-    height: 4.5%;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: rgb(var(--c2));
-    box-shadow: 0 0 6px 2px rgba(var(--c), 0.9);
-    opacity: 0;
-    animation: fx-ember 2.8s ease-out infinite;
   }
   @keyframes fx-fire-glow {
     from { opacity: calc(0.6 * var(--go, 1)); transform: scale(calc(0.94 * var(--g, 1))); }
     to { opacity: 1; transform: scale(calc(1.05 * var(--g, 1))); }
-  }
-  @keyframes fx-flame {
-    0% { transform: translateX(calc(-4% * var(--amp, 1))) scale(1, calc(1 - 0.1 * var(--amp, 1))) rotate(calc(-2.5deg * var(--amp, 1))); opacity: 0.82; }
-    50% { transform: translateX(calc(4% * var(--amp, 1))) scale(calc(1 - 0.12 * var(--amp, 1)), calc(1 + 0.12 * var(--amp, 1))) rotate(calc(2.5deg * var(--amp, 1))); opacity: 1; }
-    100% { transform: translateX(calc(-2% * var(--amp, 1))) scale(calc(1 + 0.06 * var(--amp, 1)), calc(1 - 0.04 * var(--amp, 1))) rotate(calc(-1deg * var(--amp, 1))); opacity: 0.9; }
-  }
-  @keyframes fx-ember {
-    0% { transform: translate(0, 0) scale(1); opacity: 0; }
-    30% { opacity: 0.95; }
-    100% { transform: translate(var(--dx, 100%), var(--rise, -1700%)) scale(0.3); opacity: 0; }
   }
   /* aura (contour de la zone) */
   .fx-aura { mix-blend-mode: screen; }
@@ -3932,6 +3898,326 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
   }
 
+  // ---------------------------------------------------------------
+  // Feu à particules : des centaines de petites particules montent en
+  // rétrécissant. Elles ne se dessinent pas en couleur : elles s'additionnent
+  // dans une carte de "chaleur" (invisible), qu'une palette transforme ensuite
+  // en couleurs (bords sombres/rouges transparents -> couleur du feu -> cœur
+  // jaune-blanc). C'est ce qui donne un feu sans contour net ni surexposition.
+  // ---------------------------------------------------------------
+
+  const fireEmitters = new Set();
+  const fireLutCache = new Map();
+  const fireSparkCache = new Map();
+  let fireHeatSprite = null;
+  let fireRaf = null;
+  let fireLast = 0;
+
+  function mixRgb(a, b, k) { return [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k]; }
+
+  // Table "chaleur (0-255) -> couleur + transparence" propre à la couleur choisie
+  function getFireLut(rgb) {
+    const key = rgb.join(",");
+    if (fireLutCache.has(key)) return fireLutCache.get(key);
+    const warm = rgb[0] >= rgb[1] && rgb[1] >= rgb[2]; // feu orangé : les pointes virent au rouge
+    const tip = warm ? [rgb[0] * 0.9, rgb[1] * 0.28, rgb[2] * 0.15] : rgb.map(v => v * 0.35);
+    const light = (amt) => rgb.map(v => v + (255 - v) * amt);
+    const stops = [
+      [0, tip.map(v => v * 0.5), 0],
+      [0.1, tip.map(v => v * 0.7), 0],
+      [0.25, tip, 0.7],
+      [0.45, rgb, 1],
+      [0.85, light(0.25), 1],
+      [1, light(0.55), 1]
+    ];
+    const lut = { R: new Uint8ClampedArray(256), G: new Uint8ClampedArray(256), B: new Uint8ClampedArray(256), A: new Uint8ClampedArray(256) };
+    for (let h = 0; h < 256; h++) {
+      const u = h / 255;
+      let k = 0;
+      while (k < stops.length - 2 && u > stops[k + 1][0]) k++;
+      const s0 = stops[k], s1 = stops[k + 1];
+      const f = Math.max(0, Math.min(1, (u - s0[0]) / (s1[0] - s0[0])));
+      const c = mixRgb(s0[1], s1[1], f);
+      lut.R[h] = c[0]; lut.G[h] = c[1]; lut.B[h] = c[2];
+      lut.A[h] = (s0[2] + (s1[2] - s0[2]) * f) * 255;
+    }
+    fireLutCache.set(key, lut);
+    return lut;
+  }
+
+  const fireFilterCache = new Map();
+  let fireFilterSvg = null;
+
+  // Filtre SVG qui transforme la carte de chaleur (niveaux de gris) en couleurs :
+  // même table que getFireLut, mais exécutée par le navigateur sur la carte
+  // graphique plutôt que pixel par pixel en JavaScript.
+  function getFireFilterId(rgb) {
+    const key = rgb.join(",");
+    if (fireFilterCache.has(key)) return fireFilterCache.get(key);
+    const ns = "http://www.w3.org/2000/svg";
+    if (!fireFilterSvg) {
+      fireFilterSvg = document.createElementNS(ns, "svg");
+      fireFilterSvg.setAttribute("width", "0");
+      fireFilterSvg.setAttribute("height", "0");
+      fireFilterSvg.setAttribute("aria-hidden", "true");
+      fireFilterSvg.style.position = "absolute";
+      document.body.appendChild(fireFilterSvg);
+    }
+    const lut = getFireLut(rgb);
+    const N = 33;
+    const tv = (arr) => {
+      const out = [];
+      for (let k = 0; k < N; k++) out.push((arr[Math.round(k * 255 / (N - 1))] / 255).toFixed(3));
+      return out.join(" ");
+    };
+    const id = "fxfire" + fireFilterCache.size;
+    const f = document.createElementNS(ns, "filter");
+    f.setAttribute("id", id);
+    f.setAttribute("color-interpolation-filters", "sRGB");
+    f.setAttribute("x", "0"); f.setAttribute("y", "0"); f.setAttribute("width", "1"); f.setAttribute("height", "1");
+    f.innerHTML =
+      '<feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  1 0 0 0 0"/>' +
+      '<feComponentTransfer>' +
+        '<feFuncR type="table" tableValues="' + tv(lut.R) + '"/>' +
+        '<feFuncG type="table" tableValues="' + tv(lut.G) + '"/>' +
+        '<feFuncB type="table" tableValues="' + tv(lut.B) + '"/>' +
+        '<feFuncA type="table" tableValues="' + tv(lut.A) + '"/>' +
+      '</feComponentTransfer>';
+    fireFilterSvg.appendChild(f);
+    fireFilterCache.set(key, id);
+    return id;
+  }
+
+  function getHeatSprite() {
+    if (fireHeatSprite) return fireHeatSprite;
+    const size = 64, cv = document.createElement("canvas");
+    cv.width = size; cv.height = size;
+    const g = cv.getContext("2d");
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, "rgba(255,255,255,1)");
+    grad.addColorStop(0.4, "rgba(255,255,255,0.55)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    fireHeatSprite = cv;
+    return cv;
+  }
+
+  function getSparkSprite(rgb) {
+    const key = rgb.join(",");
+    if (fireSparkCache.has(key)) return fireSparkCache.get(key);
+    const size = 16, cv = document.createElement("canvas");
+    cv.width = size; cv.height = size;
+    const g = cv.getContext("2d");
+    const c = rgb.map(v => Math.round(v + (255 - v) * 0.55)).join(",");
+    const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+    grad.addColorStop(0, "rgba(" + c + ",1)");
+    grad.addColorStop(0.5, "rgba(" + c + ",0.45)");
+    grad.addColorStop(1, "rgba(" + c + ",0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, size, size);
+    fireSparkCache.set(key, cv);
+    return cv;
+  }
+
+  function gauss() { return (Math.random() + Math.random() + Math.random() - 1.5) / 1.5; }
+
+  function stepFire(em, dt, draw) {
+    em.time += dt;
+    const t = em.t;
+    // respiration lente + éclats aléatoires (plus fréquents quand l'intensité monte)
+    const breathe = 1 + 0.18 * Math.sin(em.time * 2.1) + 0.12 * Math.sin(em.time * 4.7 + 1.3);
+    if (em.flare > 0) em.flare -= dt;
+    else if (Math.random() < dt * (0.15 + 0.9 * t)) em.flare = 0.25 + Math.random() * 0.35;
+    const boost = (em.flare > 0 ? 1.45 : 1) * breathe;
+
+    // un foyer = une petite flamme de taille "normale" ; une zone large en compte
+    // plusieurs côte à côte (le feu a plus de langues, il n'est pas agrandi)
+    for (let si = 0; si < em.sources.length; si++) {
+      const src = em.sources[si];
+      src.acc += (115 + 285 * t) * em.lowBoost * src.rate * boost * dt;
+      while (src.acc >= 1) {
+        src.acc -= 1;
+        if (em.parts.length >= em.maxP) { src.acc = 0; break; }
+        // quelques volutes fines, plus longues, qui montent plus haut : les "langues"
+        const wisp = Math.random() < 0.14 + 0.1 * t;
+        const life = wisp ? 0.9 + Math.random() * 0.6 : 0.55 + Math.random() * 0.5;
+        em.parts.push({
+          si, sx: src.x,
+          x0: src.x + gauss() * src.bw * 0.8,
+          y: em.baseY - Math.random() * src.bw * 0.2,
+          age: 0, life,
+          vy: (src.Hf / life) * (wisp ? 1.3 : 1) * (0.8 + Math.random() * 0.35) * (em.flare > 0 ? 1.2 : 1),
+          r0: src.bw * (0.4 + Math.random() * 0.35) * (wisp ? 0.6 : 1),
+          ph: Math.random() * 6.283, fr: 3 + Math.random() * 4,
+          wob: src.bw * (0.2 + 0.5 * t) * (0.5 + Math.random()) * (wisp ? 1.8 : 1)
+        });
+      }
+    }
+    // lit de flammes basses sur toute la largeur : soude les langues d'un grand foyer
+    if (em.bed) {
+      em.bedAcc += em.bed.rate * boost * dt;
+      while (em.bedAcc >= 1) {
+        em.bedAcc -= 1;
+        if (em.parts.length >= em.maxP * 1.4) { em.bedAcc = 0; break; }
+        const x0 = em.bed.x + Math.random() * em.bed.w;
+        const life = 0.35 + Math.random() * 0.3;
+        em.parts.push({
+          si: Math.min(em.sources.length - 1, Math.floor((x0 - em.bed.x) / em.bed.w * em.sources.length)),
+          sx: x0, x0, y: em.baseY - Math.random() * em.sources[0].bw * 0.1,
+          age: 0, life, vy: (em.bed.Hf / life) * (0.7 + Math.random() * 0.5),
+          r0: em.sources[0].bw * (0.35 + Math.random() * 0.25),
+          ph: Math.random() * 6.283, fr: 3 + Math.random() * 4, wob: em.sources[0].bw * 0.2
+        });
+      }
+    }
+    em.sacc += (1.5 + 26 * t) * em.sparkScale * dt;
+    while (em.sacc >= 1) {
+      em.sacc -= 1;
+      if (em.sparks.length > 45) { em.sacc = 0; break; }
+      const life = 0.8 + Math.random() * 0.9;
+      em.sparks.push({ x: em.cx + gauss() * em.bw * 0.6, y: em.baseY - em.bw * 0.3, vx: gauss() * em.bw * (0.5 + t),
+        vy: (em.Hf / life) * (0.9 + Math.random() * 0.9), age: 0, life, r: 1 + Math.random() * 1.2 + t });
+    }
+
+    // souffle d'air : toute la flamme penche tantôt d'un côté, tantôt de l'autre
+    for (let si = 0; si < em.sources.length; si++) {
+      const src = em.sources[si];
+      em.sways[si] = (Math.sin(em.time * 2.3 + src.phase) + 0.6 * Math.sin(em.time * 5.1 + 1 + src.phase)) * src.bw * (0.12 + 0.3 * t);
+    }
+    const hctx = em.ctx;
+    if (draw) {
+      hctx.globalCompositeOperation = "source-over";
+      hctx.globalAlpha = 1;
+      hctx.fillStyle = "#000";
+      hctx.fillRect(0, 0, em.W, em.H);
+      hctx.globalCompositeOperation = "lighter";
+    }
+    for (let i = em.parts.length - 1; i >= 0; i--) {
+      const p = em.parts[i];
+      p.age += dt;
+      if (p.age >= p.life) { em.parts[i] = em.parts[em.parts.length - 1]; em.parts.pop(); continue; }
+      const u = p.age / p.life;
+      p.y -= p.vy * dt;
+      if (draw) {
+        const x = p.sx + (p.x0 - p.sx) * (1 - 0.8 * u) + Math.sin(p.age * p.fr + p.ph) * p.wob * Math.pow(u, 0.7) + em.sways[p.si] * Math.pow(u, 1.2);
+        const r = p.r0 * (1 - 0.62 * u);
+        const fade = u < 0.12 ? u / 0.12 : Math.pow(1 - u, 1.35);
+        hctx.globalAlpha = Math.min(1, em.alpha * fade);
+        hctx.drawImage(em.heatSprite, x - r, p.y - r, r * 2, r * 2);
+      }
+    }
+    for (let i = em.sparks.length - 1; i >= 0; i--) {
+      const sp = em.sparks[i];
+      sp.age += dt;
+      if (sp.age >= sp.life) { em.sparks[i] = em.sparks[em.sparks.length - 1]; em.sparks.pop(); continue; }
+      sp.x += sp.vx * dt;
+      sp.y -= sp.vy * dt;
+    }
+    if (!draw) return;
+
+    // étincelles : petits points très chauds (la palette les rend jaune-blanc)
+    hctx.globalCompositeOperation = "lighter";
+    for (let i = 0; i < em.sparks.length; i++) {
+      const sp = em.sparks[i], u = sp.age / sp.life;
+      hctx.globalAlpha = Math.max(0, (1 - u) * (0.65 + 0.35 * Math.sin(sp.age * 28 + i)));
+      hctx.drawImage(em.heatSprite, sp.x - sp.r * 1.5, sp.y - sp.r * 1.5, sp.r * 3, sp.r * 3);
+    }
+    hctx.globalAlpha = 1;
+  }
+
+  function fireTick(now) {
+    fireRaf = null;
+    if (!fireEmitters.size) return;
+    const dtMs = now - fireLast;
+    if (dtMs >= 38) { // ~25 images/s : largement suffisant pour un feu, et bien moins coûteux
+      const dt = Math.min(0.06, dtMs / 1000);
+      fireLast = now;
+      fireEmitters.forEach(em => {
+        if (!em.canvas.isConnected) { fireEmitters.delete(em); return; }
+        stepFire(em, dt, true);
+      });
+    }
+    if (fireEmitters.size) fireRaf = requestAnimationFrame(fireTick);
+  }
+
+  function startFireLoop() {
+    if (!fireRaf) fireRaf = requestAnimationFrame(fireTick);
+  }
+
+  function createFireElement(z, b) {
+    const t = fireIntensity(z);
+    const col = z.effectColor || FX_DEFAULT_COLOR.feu;
+    const rgb = hexToRgbString(col).split(",").map(Number);
+    const w = Math.max(b.maxX - b.minX, 12), h = Math.max(b.maxY - b.minY, 16);
+    const cxu = (b.minX + b.maxX) / 2;
+    const rise = h * (0.75 + 0.95 * t); // hauteur des flammes, en unités du dessin
+    const reg = { left: cxu - w * 0.95, right: cxu + w * 0.95, top: b.maxY - rise * 1.15 - h * 0.35, bottom: b.maxY + h * 0.2 };
+    const regW = reg.right - reg.left, regH = reg.bottom - reg.top;
+    const PPU = 1.0; // pixels du canvas par unité de dessin (le CSS agrandit et lisse : un feu est flou de toute façon)
+
+    const el = document.createElement("div");
+    el.className = "fx fx-fire";
+    el.style.setProperty("--c", rgb.join(","));
+    el.style.setProperty("--g", (0.6 + 1.15 * t).toFixed(3));
+    el.style.setProperty("--go", (0.7 + 0.9 * t).toFixed(3));
+    el.style.left = (reg.left / 768 * 100) + "%";
+    el.style.top = (reg.top / 512 * 100) + "%";
+    el.style.width = (regW / 768 * 100) + "%";
+    el.style.height = (regH / 512 * 100) + "%";
+
+    // halo chaud autour du foyer (lumière qui se répand sur la scène)
+    const rx = w * 1.1, ry = rise * 0.8, gcy = b.maxY - 0.3 * rise;
+    const glow = document.createElement("div");
+    glow.className = "fire-glow";
+    glow.style.left = ((cxu - rx - reg.left) / regW * 100) + "%";
+    glow.style.top = ((gcy - ry - reg.top) / regH * 100) + "%";
+    glow.style.width = (2 * rx / regW * 100) + "%";
+    glow.style.height = (2 * ry / regH * 100) + "%";
+
+    const canvas = document.createElement("canvas");
+    canvas.className = "fire-canvas";
+    canvas.width = Math.max(8, Math.round(regW * PPU));
+    canvas.height = Math.max(8, Math.round(regH * PPU));
+    el.appendChild(glow);
+    el.appendChild(canvas);
+
+    canvas.style.filter = "url(#" + getFireFilterId(rgb) + ")";
+    // foyers : 1 pour une zone étroite, davantage pour une zone large
+    const W0 = 50;
+    const nSrc = w <= W0 * 1.3 ? 1 : Math.round(w / W0);
+    const slot = w / nSrc;
+    const bwS = (nSrc === 1 ? w : slot * 1.6) * PPU * 0.5 * 0.85; // foyers larges : ils se rejoignent à la base
+    const HfBase = rise * PPU * 1.45;
+    const sources = [];
+    let maxP = 0;
+    for (let k = 0; k < nSrc; k++) {
+      const frac = nSrc === 1 ? 0.5 : (k + 0.5) / nSrc;
+      const bell = 1 - Math.pow(Math.abs(2 * frac - 1), 2); // foyers du centre plus hauts
+      const Hf = HfBase * (nSrc === 1 ? 1 : 0.7 + 0.3 * bell);
+      // la densité de particules suit le rapport hauteur/largeur : une flamme fine
+      // reste aussi lumineuse qu'une flamme large
+      const rate = Math.max(0.6, Math.min(2.4, (Hf / bwS) / 4.3));
+      sources.push({ x: (b.minX + (k + 0.5) * slot - reg.left) * PPU, bw: bwS, Hf, rate, acc: 0, phase: k * 1.7 });
+      maxP += (160 + 340 * t) * rate * (1 + 0.8 * Math.pow(1 - t, 3));
+    }
+    const em = {
+      canvas, ctx: canvas.getContext("2d"),
+      W: canvas.width, H: canvas.height,
+      cx: (cxu - reg.left) * PPU, baseY: (b.maxY - reg.top) * PPU,
+      bw: w * PPU * 0.5 * 0.8, Hf: HfBase, t,
+      sources, sways: new Array(nSrc).fill(0), maxP,
+      bed: nSrc > 1 ? { x: (b.minX - reg.left) * PPU, w: w * PPU, Hf: HfBase * 0.42, rate: 60 + 240 * t } : null, bedAcc: 0,
+      heatSprite: getHeatSprite(),
+      alpha: (0.13 + 0.04 * t) * (1 + 0.35 * Math.pow(1 - t, 3)), lowBoost: 1 + 0.8 * Math.pow(1 - t, 3), sparkScale: Math.max(0.7, Math.min(2.2, w / 60)),
+      parts: [], sparks: [], sacc: 0, time: 0, flare: 0
+    };
+    for (let k = 0; k < 36; k++) stepFire(em, 1 / 30, false); // le feu est déjà "pris" à l'affichage
+    fireEmitters.add(em);
+    startFireLoop();
+    return el;
+  }
+
   // Construit l'élément visuel d'un effet (null s'il est éteint)
   function createEffectElement(z) {
     if (!effectIsActive(z)) return null;
@@ -3987,42 +4273,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       ).join("");
       el.style.setProperty("--c", hexToRgbString(z.effectColor || FX_DEFAULT_COLOR.fumee));
     } else if (z.effectKind === "feu") {
-      // langues de flammes qui ondulent + halo chaud qui vacille + braises ;
-      // l'intensité (0 = bougie, 35 = feu de cheminée, 100 = brasier) règle le
-      // nombre et la hauteur des flammes, leur nervosité, le halo et les braises
-      const t = fireIntensity(z);
-      w = Math.max(b.maxX - b.minX, 12);
-      h = Math.max(b.maxY - b.minY, 16);
-      el.className = "fx fx-fire";
-      const col = z.effectColor || FX_DEFAULT_COLOR.feu;
-      el.style.setProperty("--c", hexToRgbString(col));
-      el.style.setProperty("--c2", lightenRgbString(col, 0.5));
-      el.style.setProperty("--amp", (0.45 + 1.6 * t).toFixed(3));   // amplitude de l'agitation
-      el.style.setProperty("--g", (0.6 + 1.15 * t).toFixed(3));     // taille du halo
-      el.style.setProperty("--go", (0.7 + 0.9 * t).toFixed(3));     // force du halo
-      const spd = 0.6 + 1.1 * t;      // vitesse d'agitation
-      const hm = 0.7 + 0.85 * t;      // hauteur des flammes
-      const wm = 0.825 + 0.5 * t;     // largeur des flammes
-      const nT = t < 0.35 ? 3 + Math.round(t / 0.35 * 2) : 5 + Math.round((t - 0.35) / 0.65 * 6);
-      // [gauche %, largeur %, hauteur %, durée, décalage, forme] — les 5 premières sont celles d'origine
-      const base = [[2, 46, 82, 0.85, 0, 1], [22, 56, 100, 1.05, 0.3, 0], [48, 48, 84, 0.9, 0.6, 2], [12, 38, 60, 0.75, 0.2, 2], [52, 38, 64, 0.8, 0.5, 1]];
-      const tongues = [];
-      for (let k = 0; k < nT; k++) {
-        if (k < base.length) tongues.push(base[k]);
-        else {
-          const q = k - base.length + 1; // langues supplémentaires (disposition fixe, pas de hasard)
-          tongues.push([(q * 37) % 62, 34 + (q * 11) % 18, 58 + (q * 17) % 38, 0.6 + ((q * 7) % 5) * 0.09, ((q * 13) % 10) / 10, q % 3]);
-        }
-      }
-      const nE = Math.max(1, Math.round(t * 11.5));
-      const embers = [];
-      for (let k = 0; k < nE; k++) embers.push([15 + (k * 29) % 62, (k * 0.37) % 2.6, (k % 2 ? -1 : 1) * (80 + (k * 53) % 160)]);
-      const emberDur = (2.8 / spd).toFixed(2);
-      const rise = -Math.round(1500 + 1100 * t);
-      el.innerHTML = '<div class="fire-glow"></div><div class="flames">' +
-        tongues.map(q => '<div class="tongue shape-' + q[5] + '" style="left:' + q[0] + '%;width:' + Math.min(75, q[1] * wm).toFixed(1) + '%;height:' + (q[2] * hm).toFixed(1) + '%;animation-duration:' + (q[3] / spd).toFixed(2) + 's;animation-delay:-' + q[4] + 's;"></div>').join("") +
-        '</div>' +
-        embers.map(e => '<div class="ember" style="left:' + e[0] + '%;animation-duration:' + emberDur + 's;animation-delay:-' + e[1].toFixed(2) + 's;--dx:' + e[2] + '%;--rise:' + rise + '%;"></div>').join("");
+      return createFireElement(z, b);
     } else {
       // le halo déborde un peu de la zone dessinée, pour un rendu plus naturel
       w = Math.max(b.maxX - b.minX, 8) * 1.6;
