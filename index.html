@@ -1216,6 +1216,25 @@
     color: var(--ink);
     font-size: 0.85rem;
   }
+  .mosaic-tile .mosaic-index {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    z-index: 2;
+    min-width: 22px;
+    height: 22px;
+    padding: 0 6px;
+    border-radius: 11px;
+    background: rgba(0, 0, 0, 0.7);
+    border: 1px solid var(--panel-edge);
+    color: var(--gold);
+    font-size: 0.72rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .mosaic-tile.dragging { opacity: 0.4; }
+  .mosaic-tile.reorder-over { box-shadow: -5px 0 0 var(--gold); }
   .mosaic-tile .mosaic-placeholder-icon {
     position: absolute;
     inset: 0;
@@ -1642,6 +1661,37 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     }
   }
 
+  async function readScenesOrder() {
+    try {
+      const fh = await rootDirHandle.getFileHandle("scenes-order.json");
+      const data = JSON.parse(await (await fh.getFile()).text());
+      return Array.isArray(data.order) ? data.order : [];
+    } catch (e) {
+      return [];
+    }
+  }
+
+  async function saveScenesOrder() {
+    try {
+      await writeJsonIntoDir(rootDirHandle, "scenes-order.json", { order: scenesList.slice() });
+    } catch (e) {
+      showToast("Impossible d'enregistrer l'ordre des scènes.", true);
+    }
+  }
+
+  // Déplace une scène juste avant "beforeName" (ou tout à la fin si null)
+  function moveScene(name, beforeName) {
+    if (name === beforeName) return;
+    const i = scenesList.indexOf(name);
+    if (i < 0) return;
+    scenesList.splice(i, 1);
+    const j = beforeName ? scenesList.indexOf(beforeName) : -1;
+    if (j >= 0) scenesList.splice(j, 0, name);
+    else scenesList.push(name);
+    saveScenesOrder();
+    renderScenesMosaic();
+  }
+
   async function scanScenes() {
     scenesList = [];
     try {
@@ -1654,6 +1704,16 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       showToast("Impossible de lire ce dossier.", true);
       return;
     }
+    // ordre choisi à la main (chronologie) ; les scènes pas encore classées
+    // se placent à la suite, par ordre alphabétique "naturel" (2 avant 10)
+    const savedOrder = await readScenesOrder();
+    scenesList.sort((a, b) => {
+      const ia = savedOrder.indexOf(a), ib = savedOrder.indexOf(b);
+      if (ia >= 0 && ib >= 0) return ia - ib;
+      if (ia >= 0) return -1;
+      if (ib >= 0) return 1;
+      return a.localeCompare(b, undefined, { numeric: true });
+    });
     diskRootBtn.textContent = "📁 " + (rootDirHandle.name || "Dossier");
     if (scenesMosaicOpen) renderScenesMosaic();
   }
@@ -2727,13 +2787,40 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   }
 
   function renderScenesMosaic() {
-    scenesMosaicEl.innerHTML = '<div class="mosaic-hint">Double-clique une scène pour la charger (MJ + vue Joueur).</div>';
-    scenesList.forEach(name => {
+    const canReorder = state.mode === "edit";
+    scenesMosaicEl.innerHTML = '<div class="mosaic-hint">Double-clique une scène pour la charger (MJ + vue Joueur).' +
+      (canReorder ? " Glisse une vignette pour changer l'ordre (chronologie)." : "") + '</div>';
+    scenesList.forEach((name, idx) => {
       const tile = document.createElement("div");
       tile.className = "mosaic-tile" + (name === currentSceneName ? " active-scene" : "");
+      tile.dataset.scene = name;
       tile.innerHTML =
         '<div class="mosaic-placeholder-icon">🖼️</div>' +
+        '<div class="mosaic-index">' + (idx + 1) + '</div>' +
         '<div class="mosaic-label">' + (loadedSceneNames[name] || name) + '</div>';
+      if (canReorder) {
+        const isOrderDrag = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes("application/x-scene-order");
+        tile.draggable = true;
+        tile.addEventListener("dragstart", (e) => {
+          e.dataTransfer.setData("application/x-scene-order", name);
+          e.dataTransfer.effectAllowed = "move";
+          tile.classList.add("dragging");
+        });
+        tile.addEventListener("dragend", () => tile.classList.remove("dragging"));
+        tile.addEventListener("dragover", (e) => {
+          if (!isOrderDrag(e)) return;
+          e.preventDefault();
+          tile.classList.add("reorder-over");
+        });
+        tile.addEventListener("dragleave", () => tile.classList.remove("reorder-over"));
+        tile.addEventListener("drop", (e) => {
+          const dragged = e.dataTransfer.getData("application/x-scene-order");
+          if (!dragged) return;
+          e.preventDefault();
+          tile.classList.remove("reorder-over");
+          moveScene(dragged, name);
+        });
+      }
       tile.addEventListener("dblclick", async () => {
         closeScenesMosaic();
         await loadSceneFromDisk(name);
@@ -2743,6 +2830,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         if (!url) return;
         const img = document.createElement("img");
         img.src = url;
+        img.draggable = false;
         tile.insertBefore(img, tile.firstChild);
         const icon = tile.querySelector(".mosaic-placeholder-icon");
         if (icon) icon.remove();
@@ -2761,6 +2849,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     addTile.addEventListener("drop", async (e) => {
       e.preventDefault();
       addTile.classList.remove("drag-over");
+      const draggedScene = e.dataTransfer.getData("application/x-scene-order");
+      if (draggedScene) { moveScene(draggedScene, null); return; }
       const file = e.dataTransfer.files && e.dataTransfer.files[0];
       if (!file || !/^image\//.test(file.type)) {
         showToast("Dépose une image pour créer une scène.", true);
