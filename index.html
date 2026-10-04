@@ -493,26 +493,11 @@
   @keyframes fx-strobe-b {
     0%, 50% { opacity: 0.05; } 51%, 65% { opacity: 1; } 66%, 80% { opacity: 0.05; } 81%, 95% { opacity: 1; } 96%, 100% { opacity: 0.05; }
   }
-  .fx-smoke {
-    overflow: hidden;
-    -webkit-mask-image: linear-gradient(to top, #000 0%, #000 55%, transparent 100%);
-    mask-image: linear-gradient(to top, #000 0%, #000 55%, transparent 100%);
-  }
-  .fx-smoke .puff {
-    position: absolute;
-    bottom: 0;
-    height: 50%;
-    aspect-ratio: 1;
-    border-radius: 50%;
-    background: radial-gradient(closest-side, rgba(var(--c), 0.6), rgba(var(--c), 0));
-    filter: blur(5px);
-    opacity: 0;
-    animation: fx-smoke-rise 7s ease-out infinite;
-  }
-  @keyframes fx-smoke-rise {
-    0% { transform: translate(0, 0) scale(0.5); opacity: 0; }
-    15% { opacity: 0.85; }
-    100% { transform: translate(var(--dx, 8%), -230%) scale(1.9); opacity: 0; }
+  /* fumée (particules sur canvas, même moteur que le feu) */
+  .fx-smoke .smoke-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    -webkit-mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
+    mask-image: linear-gradient(to top, #000 0%, #000 78%, transparent 100%);
   }
   /* feu (particules sur canvas + halo chaud en CSS) */
   .fx-fire { mix-blend-mode: screen; }
@@ -3516,7 +3501,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       (zone.type === "son" ? row("Mode", zone.soundMode === "unique" ? "Bruitage unique" : "Superposé (on/off)") : "") +
       (zone.type === "son" ? row("Volume", (typeof zone.volume === "number" ? zone.volume : 100) + " %") : "") +
       (zone.type === "image" ? row("Affichage", zone.insertMode === "ephemere" ? "Éphémère (" + (zone.insertDuration || 5) + " s)" : "Reste ouvert") : "") +
-      (zone.type === "effet" ? row("Effet", fxKindLabel(zone.effectKind)) + (zone.effectKind === "feu" ? row("Intensité", Math.round(fireIntensity(zone) * 100) + " / 100") : "") + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
+      (zone.type === "effet" ? row("Effet", fxKindLabel(zone.effectKind)) + ((zone.effectKind === "feu" || zone.effectKind === "fumee") ? row(zone.effectKind === "fumee" ? "Densité" : "Intensité", Math.round(fireIntensity(zone) * 100) + " / 100") : "") + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
       (zone.type === "scene" ? row("Cible", diskMode ? (loadedSceneNames[zone.target] || zone.target) : (SCENES[zone.target] ? SCENES[zone.target].name : zone.target)) : "");
   }
 
@@ -3945,14 +3930,36 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     return lut;
   }
 
+  // Palette de la fumée : transparente sur les bords, de plus en plus opaque et
+  // sombre au cœur du panache (ça donne du volume)
+  function getSmokeLut(rgb) {
+    const key = "s" + rgb.join(",");
+    if (fireLutCache.has(key)) return fireLutCache.get(key);
+    const dk = (k) => rgb.map(v => v * k);
+    const stops = [[0, rgb, 0], [0.07, rgb, 0], [0.4, dk(0.93), 0.24], [0.75, dk(0.8), 0.44], [1, dk(0.66), 0.6]];
+    const lut = { R: new Uint8ClampedArray(256), G: new Uint8ClampedArray(256), B: new Uint8ClampedArray(256), A: new Uint8ClampedArray(256) };
+    for (let h = 0; h < 256; h++) {
+      const u = h / 255;
+      let k = 0;
+      while (k < stops.length - 2 && u > stops[k + 1][0]) k++;
+      const s0 = stops[k], s1 = stops[k + 1];
+      const f = Math.max(0, Math.min(1, (u - s0[0]) / (s1[0] - s0[0])));
+      const c = mixRgb(s0[1], s1[1], f);
+      lut.R[h] = c[0]; lut.G[h] = c[1]; lut.B[h] = c[2];
+      lut.A[h] = (s0[2] + (s1[2] - s0[2]) * f) * 255;
+    }
+    fireLutCache.set(key, lut);
+    return lut;
+  }
+
   const fireFilterCache = new Map();
   let fireFilterSvg = null;
 
   // Filtre SVG qui transforme la carte de chaleur (niveaux de gris) en couleurs :
   // même table que getFireLut, mais exécutée par le navigateur sur la carte
   // graphique plutôt que pixel par pixel en JavaScript.
-  function getFireFilterId(rgb) {
-    const key = rgb.join(",");
+  function getFireFilterId(rgb, kind) {
+    const key = (kind || "feu") + ":" + rgb.join(",");
     if (fireFilterCache.has(key)) return fireFilterCache.get(key);
     const ns = "http://www.w3.org/2000/svg";
     if (!fireFilterSvg) {
@@ -3963,7 +3970,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       fireFilterSvg.style.position = "absolute";
       document.body.appendChild(fireFilterSvg);
     }
-    const lut = getFireLut(rgb);
+    const lut = kind === "fumee" ? getSmokeLut(rgb) : getFireLut(rgb);
     const N = 33;
     const tv = (arr) => {
       const out = [];
@@ -4135,7 +4142,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       fireLast = now;
       fireEmitters.forEach(em => {
         if (!em.canvas.isConnected) { fireEmitters.delete(em); return; }
-        stepFire(em, dt, true);
+        em.step(em, dt, true);
       });
     }
     if (fireEmitters.size) fireRaf = requestAnimationFrame(fireTick);
@@ -4143,6 +4150,131 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   function startFireLoop() {
     if (!fireRaf) fireRaf = requestAnimationFrame(fireTick);
+  }
+
+  // Fumée : des particules lentes qui montent en s'élargissant, se déforment
+  // (tourbillons de plus en plus amples) et s'effacent. Même principe que le feu :
+  // elles s'additionnent dans une carte de densité que la palette de fumée colorise.
+  let smokeSprites = null;
+  function getSmokeSprites() {
+    if (smokeSprites) return smokeSprites;
+    smokeSprites = [];
+    const size = 64;
+    for (let v = 0; v < 4; v++) {
+      const cv = document.createElement("canvas");
+      cv.width = size; cv.height = size;
+      const g = cv.getContext("2d");
+      g.globalCompositeOperation = "lighter";
+      const blob = (x, y, r, a) => {
+        const grad = g.createRadialGradient(x, y, 0, x, y, r);
+        grad.addColorStop(0, "rgba(255,255,255," + a + ")");
+        grad.addColorStop(0.55, "rgba(255,255,255," + (a * 0.45) + ")");
+        grad.addColorStop(1, "rgba(255,255,255,0)");
+        g.fillStyle = grad;
+        g.fillRect(0, 0, size, size);
+      };
+      blob(size / 2, size / 2, size * 0.5, 0.35); // corps doux
+      for (let k = 0; k < 9; k++) { // bosses : petits bouillons sur le pourtour
+        const ang = Math.random() * 6.283, rad = Math.random() * size * 0.26;
+        blob(size / 2 + Math.cos(ang) * rad, size / 2 + Math.sin(ang) * rad, size * (0.14 + Math.random() * 0.18), 0.5);
+      }
+      smokeSprites.push(cv);
+    }
+    return smokeSprites;
+  }
+
+  function stepSmoke(em, dt, draw) {
+    em.time += dt;
+    const d = em.d;
+    em.acc += (36 + 110 * d) * em.rateScale * dt;
+    while (em.acc >= 1) {
+      em.acc -= 1;
+      if (em.parts.length >= em.maxP) { em.acc = 0; break; }
+      const big = Math.random() < 0.3; // gros bouillons doux, sinon volutes fines et plus denses
+      const life = big ? 2.6 + Math.random() * 1.8 : 1.8 + Math.random() * 1.8;
+      em.parts.push({
+        x0: em.srcX[(Math.random() * em.srcX.length) | 0] + gauss() * em.bw * 0.4,
+        y: em.baseY - Math.random() * em.bw * 0.15,
+        age: 0, life, vy: (em.Hs / life) * (big ? 0.85 : 1.35) * (0.8 + Math.random() * 0.45),
+        r0: em.bw * em.sz * (big ? 0.6 + Math.random() * 0.5 : 0.2 + Math.random() * 0.3),
+        am: big ? 0.55 : 1.25,
+        drift: gauss() * em.bw * 0.7,
+        ph: Math.random() * 6.283, fr: 0.8 + Math.random() * 1.2, wob: em.bw * (0.7 + Math.random() * 1.4),
+        ph2: Math.random() * 6.283, fr2: 2.2 + Math.random() * 2.6, wob2: em.bw * (0.3 + Math.random() * 0.8),
+        sp: (Math.random() * 4) | 0
+      });
+    }
+    const sway = Math.sin(em.time * 0.7) * em.bw * 1.1 + Math.sin(em.time * 1.9 + 2) * em.bw * 0.5;
+    const ctx = em.ctx;
+    if (draw) {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, em.W, em.H);
+      ctx.globalCompositeOperation = "lighter";
+    }
+    for (let i = em.parts.length - 1; i >= 0; i--) {
+      const p = em.parts[i];
+      p.age += dt;
+      if (p.age >= p.life) { em.parts[i] = em.parts[em.parts.length - 1]; em.parts.pop(); continue; }
+      const u = p.age / p.life;
+      p.y -= p.vy * dt * (1.25 - 0.7 * u); // la fumée ralentit en montant
+      if (draw) {
+        const x = p.x0 + p.drift * p.age * (0.4 + u) + Math.sin(p.age * p.fr + p.ph) * p.wob * u +
+                  Math.sin(p.age * p.fr2 + p.ph2) * p.wob2 * u * u + sway * u * u;
+        const r = p.r0 * (0.65 + 1.0 * u);
+        const fade = (u < 0.15 ? u / 0.15 : 1) * Math.pow(1 - u, 1.5);
+        ctx.globalAlpha = Math.min(1, em.alpha * p.am * fade);
+        ctx.drawImage(em.sprites[p.sp], x - r, p.y - r, r * 2, r * 2);
+      }
+    }
+    if (draw) ctx.globalAlpha = 1;
+  }
+
+  function createSmokeElement(z, b) {
+    const d = fireIntensity(z); // densité : 0 = voile léger, 100 = fumée épaisse
+    const col = z.effectColor || FX_DEFAULT_COLOR.fumee;
+    const rgb = hexToRgbString(col).split(",").map(Number);
+    const w = Math.max(b.maxX - b.minX, 10), h = Math.max(b.maxY - b.minY, 14);
+    const cxu = (b.minX + b.maxX) / 2;
+    const Hs = h * 1.25; // le panache monte à peu près jusqu'au haut de la zone dessinée
+    const reg = { left: cxu - w * 1.7, right: cxu + w * 1.7, top: b.maxY - Hs - Math.max(h * 0.3, w * 0.8), bottom: b.maxY + h * 0.1 };
+    const regW = reg.right - reg.left, regH = reg.bottom - reg.top;
+    const PPU = 0.7; // la fumée est floue : un canvas petit suffit (et coûte peu)
+
+    const el = document.createElement("div");
+    el.className = "fx fx-smoke";
+    el.style.left = (reg.left / 768 * 100) + "%";
+    el.style.top = (reg.top / 512 * 100) + "%";
+    el.style.width = (regW / 768 * 100) + "%";
+    el.style.height = (regH / 512 * 100) + "%";
+    const canvas = document.createElement("canvas");
+    canvas.className = "smoke-canvas";
+    canvas.width = Math.max(8, Math.round(regW * PPU));
+    canvas.height = Math.max(8, Math.round(regH * PPU));
+    canvas.style.filter = "url(#" + getFireFilterId(rgb, "fumee") + ")";
+    el.appendChild(canvas);
+
+    // une zone large = plusieurs sources de fumée côte à côte (un nuage plus riche,
+    // pas un panache agrandi)
+    const nSrc = w <= 70 ? 1 : Math.round(w / 55);
+    const slot = w / nSrc;
+    const srcX = [];
+    for (let k = 0; k < nSrc; k++) srcX.push((b.minX + (k + 0.5) * slot - reg.left) * PPU);
+    const bwS = (nSrc === 1 ? w : slot * 1.3) * PPU * 0.5 * 0.8;
+    const rateScale = Math.max(0.6, Math.min(2.4, w / 40));
+    const em = {
+      canvas, ctx: canvas.getContext("2d"), W: canvas.width, H: canvas.height,
+      cx: (cxu - reg.left) * PPU, baseY: (b.maxY - reg.top) * PPU,
+      bw: bwS, srcX, Hs: Hs * PPU, d,
+      sprites: getSmokeSprites(), alpha: 0.075 + 0.03 * d, sz: 0.85 + 0.7 * d,
+      rateScale, maxP: (90 + 230 * d) * rateScale,
+      parts: [], acc: 0, time: 0, step: stepSmoke
+    };
+    for (let k = 0; k < 100; k++) stepSmoke(em, 0.05, false); // le panache est déjà formé à l'affichage
+    fireEmitters.add(em);
+    startFireLoop();
+    return el;
   }
 
   function createFireElement(z, b) {
@@ -4210,7 +4342,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       bed: nSrc > 1 ? { x: (b.minX - reg.left) * PPU, w: w * PPU, Hf: HfBase * 0.42, rate: 60 + 240 * t } : null, bedAcc: 0,
       heatSprite: getHeatSprite(),
       alpha: (0.13 + 0.04 * t) * (1 + 0.35 * Math.pow(1 - t, 3)), lowBoost: 1 + 0.8 * Math.pow(1 - t, 3), sparkScale: Math.max(0.7, Math.min(2.2, w / 60)),
-      parts: [], sparks: [], sacc: 0, time: 0, flare: 0
+      parts: [], sparks: [], sacc: 0, time: 0, flare: 0, step: stepFire
     };
     for (let k = 0; k < 36; k++) stepFire(em, 1 / 30, false); // le feu est déjà "pris" à l'affichage
     fireEmitters.add(em);
@@ -4264,14 +4396,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
     let w, h;
     if (z.effectKind === "fumee") {
-      w = Math.max(b.maxX - b.minX, 10);
-      h = Math.max(b.maxY - b.minY, 14);
-      el.className = "fx fx-smoke";
-      const puffs = [[18, 0, 8], [42, 1.4, -6], [28, 2.8, 12], [52, 4.2, -10], [36, 5.6, 6]];
-      el.innerHTML = puffs.map(p =>
-        '<div class="puff" style="left:' + p[0] + '%;animation-delay:-' + p[1] + 's;--dx:' + p[2] + '%;"></div>'
-      ).join("");
-      el.style.setProperty("--c", hexToRgbString(z.effectColor || FX_DEFAULT_COLOR.fumee));
+      return createSmokeElement(z, b);
     } else if (z.effectKind === "feu") {
       return createFireElement(z, b);
     } else {
@@ -4329,10 +4454,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         : "") +
       '<label class="zi-label">Couleur</label>' +
       '<input type="color" id="zi-fx-color" value="' + (zone.effectColor || FX_DEFAULT_COLOR[kind]) + '">' +
-      (kind === "feu"
-        ? '<label class="zi-label">Intensité : <span id="zi-fx-int-val">' + Math.round(fireIntensity(zone) * 100) + '</span> / 100</label>' +
+      (kind === "feu" || kind === "fumee"
+        ? '<label class="zi-label">' + (kind === "fumee" ? "Densité" : "Intensité") + ' : <span id="zi-fx-int-val">' + Math.round(fireIntensity(zone) * 100) + '</span> / 100</label>' +
           '<input type="range" id="zi-fx-intensity" class="weather-slider" min="0" max="100" step="1" value="' + Math.round(fireIntensity(zone) * 100) + '">' +
-          '<div class="zi-hint">bougie ← feu de cheminée → brasier</div>'
+          '<div class="zi-hint">' + (kind === "fumee" ? "voile léger ← → fumée épaisse" : "bougie ← feu de cheminée → brasier") + '</div>'
         : "") +
       (kind === "lumiere" && beh === "gyro"
         ? '<label class="zi-label">Seconde couleur</label><input type="color" id="zi-fx-color2" value="' + (zone.effectColor2 || "#2a5bff") + '">'
@@ -4805,9 +4930,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
           '</div>' +
           '<label>Couleur</label>' +
           '<input type="color" id="zf-fx-color" value="#ffd27a">' +
-          '<div id="zf-fx-intensity-wrap" style="display:none"><label>Intensité : <span id="zf-fx-int-val">35</span> / 100</label>' +
+          '<div id="zf-fx-intensity-wrap" style="display:none"><label><span id="zf-fx-int-name">Intensité</span> : <span id="zf-fx-int-val">35</span> / 100</label>' +
             '<input type="range" id="zf-fx-intensity" class="weather-slider" min="0" max="100" step="1" value="35">' +
-            '<div class="note">bougie ← feu de cheminée → brasier</div></div>' +
+            '<div class="note" id="zf-fx-int-hint">bougie ← feu de cheminée → brasier</div></div>' +
           '<div id="zf-fx-color2-wrap" style="display:none"><label>Seconde couleur</label><input type="color" id="zf-fx-color2" value="#2a5bff"></div>' +
           '<label>Activation</label>' +
           '<select id="zf-fx-mode"><option value="loop">En boucle dès l\'arrivée sur la scène</option><option value="toggle">Au clic (allumer / éteindre)</option></select>' +
@@ -4842,7 +4967,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       const k = fxKindSel.value;
       overlay.querySelector("#zf-fx-behavior-wrap").style.display = FX_BEHAVIORS[k] ? "block" : "none";
       fxColor2Wrap.style.display = (k === "lumiere" && fxBehSel.value === "gyro") ? "block" : "none";
-      overlay.querySelector("#zf-fx-intensity-wrap").style.display = k === "feu" ? "block" : "none";
+      overlay.querySelector("#zf-fx-intensity-wrap").style.display = (k === "feu" || k === "fumee") ? "block" : "none";
+      overlay.querySelector("#zf-fx-int-name").textContent = k === "fumee" ? "Densité" : "Intensité";
+      overlay.querySelector("#zf-fx-int-hint").textContent = k === "fumee" ? "voile léger ← → fumée épaisse" : "bougie ← feu de cheminée → brasier";
     }
     overlay.querySelector("#zf-fx-intensity").addEventListener("input", (e) => {
       overlay.querySelector("#zf-fx-int-val").textContent = e.target.value;
@@ -4895,7 +5022,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         zone.effectKind = fxKindSel.value;
         zone.effectColor = fxColorIn.value;
         zone.effectMode = overlay.querySelector("#zf-fx-mode").value;
-        if (zone.effectKind === "feu") zone.effectIntensity = parseInt(overlay.querySelector("#zf-fx-intensity").value, 10);
+        if (zone.effectKind === "feu" || zone.effectKind === "fumee") zone.effectIntensity = parseInt(overlay.querySelector("#zf-fx-intensity").value, 10);
         if (FX_BEHAVIORS[zone.effectKind]) {
           zone.effectBehavior = fxBehSel.value;
           if (zone.effectKind === "lumiere" && zone.effectBehavior === "gyro") zone.effectColor2 = overlay.querySelector("#zf-fx-color2").value;
