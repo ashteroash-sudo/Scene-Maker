@@ -514,6 +514,63 @@
     15% { opacity: 0.85; }
     100% { transform: translate(var(--dx, 8%), -230%) scale(1.9); opacity: 0; }
   }
+  /* feu */
+  .fx-fire { mix-blend-mode: screen; }
+  .fx-fire .fire-glow {
+    position: absolute;
+    left: -45%; right: -45%; top: -25%; bottom: -35%;
+    border-radius: 50%;
+    background: radial-gradient(closest-side, rgba(var(--c), 0.65), rgba(var(--c), 0.22) 55%, rgba(var(--c), 0) 100%);
+    animation: fx-fire-glow 1.4s ease-in-out infinite alternate;
+  }
+  .fx-fire .flames { position: absolute; inset: 0; filter: blur(1.6px); }
+  .fx-fire .tongue {
+    position: absolute;
+    bottom: 0;
+    transform-origin: 50% 100%;
+    background:
+      radial-gradient(ellipse 48% 42% at 50% 90%, rgba(var(--c2), 1) 0%, rgba(var(--c2), 0) 100%),
+      linear-gradient(to top, rgba(var(--c), 1) 0%, rgba(var(--c), 0.92) 40%, rgba(var(--c), 0.55) 75%, rgba(var(--c), 0) 100%);
+    animation: fx-flame 0.9s ease-in-out infinite alternate;
+  }
+  .fx-fire .tongue.shape-0 { clip-path: polygon(50% 0%, 58% 14%, 67% 30%, 77% 48%, 85% 66%, 89% 82%, 81% 94%, 66% 100%, 34% 100%, 19% 94%, 11% 82%, 15% 66%, 23% 48%, 33% 30%, 42% 14%); }
+  .fx-fire .tongue.shape-1 { clip-path: polygon(62% 0%, 66% 12%, 72% 28%, 80% 46%, 87% 64%, 90% 82%, 80% 95%, 66% 100%, 34% 100%, 18% 94%, 10% 80%, 16% 62%, 26% 44%, 38% 26%, 50% 12%); }
+  .fx-fire .tongue.shape-2 { clip-path: polygon(38% 0%, 34% 12%, 28% 28%, 20% 46%, 13% 64%, 10% 82%, 20% 95%, 34% 100%, 66% 100%, 82% 94%, 90% 80%, 84% 62%, 74% 44%, 62% 26%, 50% 12%); }
+  .fx-fire .ember {
+    position: absolute;
+    bottom: 30%;
+    height: 4.5%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: rgb(var(--c2));
+    box-shadow: 0 0 6px 2px rgba(var(--c), 0.9);
+    opacity: 0;
+    animation: fx-ember 2.8s ease-out infinite;
+  }
+  @keyframes fx-fire-glow {
+    from { opacity: 0.6; transform: scale(0.94); }
+    to { opacity: 1; transform: scale(1.05); }
+  }
+  @keyframes fx-flame {
+    0% { transform: translateX(-4%) scale(1, 0.9) rotate(-2.5deg); opacity: 0.82; }
+    50% { transform: translateX(4%) scale(0.88, 1.12) rotate(2.5deg); opacity: 1; }
+    100% { transform: translateX(-2%) scale(1.06, 0.96) rotate(-1deg); opacity: 0.9; }
+  }
+  @keyframes fx-ember {
+    0% { transform: translate(0, 0) scale(1); opacity: 0; }
+    30% { opacity: 0.95; }
+    100% { transform: translate(var(--dx, 100%), -1700%) scale(0.3); opacity: 0; }
+  }
+  /* aura (contour de la zone) */
+  .fx-aura { mix-blend-mode: screen; }
+  .fx-aura svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+  .fx-aura .aura-glow.beh-pulse { animation: fx-aura-pulse 3.4s ease-in-out infinite; }
+  .fx-aura .aura-run path { animation: fx-aura-run 6s linear infinite; }
+  @keyframes fx-aura-pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  @keyframes fx-aura-run { to { stroke-dashoffset: -100; } }
   .zone-form input[type="color"], .zone-info-box input[type="color"] {
     width: 100%;
     height: 32px;
@@ -3285,7 +3342,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   function makeLabel(zone) {
     const div = document.createElement("div");
     div.className = "zone-label";
-    div.textContent = zone.icon + " " + zone.name;
+    div.textContent = (zone.icon ? zone.icon + " " : "") + zone.name;
     const c = centroid(zone.points);
     const stageBox = document.getElementById("stage").getBoundingClientRect();
     div.style.left = (c.x / 768 * 100) + "%";
@@ -3492,7 +3549,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       (zone.type === "son" ? row("Mode", zone.soundMode === "unique" ? "Bruitage unique" : "Superposé (on/off)") : "") +
       (zone.type === "son" ? row("Volume", (typeof zone.volume === "number" ? zone.volume : 100) + " %") : "") +
       (zone.type === "image" ? row("Affichage", zone.insertMode === "ephemere" ? "Éphémère (" + (zone.insertDuration || 5) + " s)" : "Reste ouvert") : "") +
-      (zone.type === "effet" ? row("Effet", (zone.effectKind === "fumee" ? "Fumée" : "Lumière")) + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
+      (zone.type === "effet" ? row("Effet", fxKindLabel(zone.effectKind)) + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
       (zone.type === "scene" ? row("Cible", diskMode ? (loadedSceneNames[zone.target] || zone.target) : (SCENES[zone.target] ? SCENES[zone.target].name : zone.target)) : "");
   }
 
@@ -3827,7 +3884,29 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   // allumés/éteints au clic en MJ.
   // ---------------------------------------------------------------
 
-  const FX_DEFAULT_COLOR = { lumiere: "#ffd27a", fumee: "#cfd3d8" };
+  const FX_DEFAULT_COLOR = { lumiere: "#ffd27a", fumee: "#cfd3d8", feu: "#ff8a1f", aura: "#b07cff" };
+  const FX_KINDS = [["lumiere", "Lumière"], ["fumee", "Fumée"], ["feu", "Feu"], ["aura", "Aura (contour de la zone)"]];
+  // comportements disponibles selon l'effet (feu et fumée n'en ont pas)
+  const FX_BEHAVIORS = {
+    lumiere: [["fixe", "Fixe"], ["pulse", "Pulsation lente"], ["defaillante", "Lampe défaillante"], ["gyro", "Gyrophare (2 couleurs)"]],
+    aura: [["fixe", "Fixe"], ["pulse", "Pulsation douce"], ["energie", "Énergie qui court le long du bord"]]
+  };
+  function fxBehaviorDefault(kind) { return kind === "aura" ? "pulse" : "fixe"; }
+  function fxBehaviorValid(kind, b) { return !!(FX_BEHAVIORS[kind] && FX_BEHAVIORS[kind].some(x => x[0] === b)); }
+  function fxBehaviorOptionsHtml(kind, current) { return (FX_BEHAVIORS[kind] || []).map(x => fxOpt(x[0], x[1], current)).join(""); }
+  function fxKindOptionsHtml(current) { return FX_KINDS.map(x => fxOpt(x[0], x[1], current)).join(""); }
+  function fxKindLabel(kind) { const k = FX_KINDS.find(x => x[0] === kind); return k ? k[1] : "Lumière"; }
+  function lightenRgbString(hex, amt) {
+    return hexToRgbString(hex).split(",").map(Number).map(v => Math.round(v + (255 - v) * amt)).join(",");
+  }
+  function polyPerimeter(pts) {
+    let t = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], b = pts[(i + 1) % pts.length];
+      t += Math.hypot(a[0] - b[0], a[1] - b[1]);
+    }
+    return t;
+  }
   let effectsSignature = "";
 
   function hexToRgbString(hex) {
@@ -3850,38 +3929,91 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   // Construit l'élément visuel d'un effet (null s'il est éteint)
   function createEffectElement(z) {
     if (!effectIsActive(z)) return null;
-      const b = zoneBBox(z.points);
-      const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
-      const el = document.createElement("div");
-      let w, h;
-      if (z.effectKind === "fumee") {
-        w = Math.max(b.maxX - b.minX, 10);
-        h = Math.max(b.maxY - b.minY, 14);
-        el.className = "fx fx-smoke";
-        const puffs = [[18, 0, 8], [42, 1.4, -6], [28, 2.8, 12], [52, 4.2, -10], [36, 5.6, 6]];
-        el.innerHTML = puffs.map(p =>
-          '<div class="puff" style="left:' + p[0] + '%;animation-delay:-' + p[1] + 's;--dx:' + p[2] + '%;"></div>'
-        ).join("");
-        el.style.setProperty("--c", hexToRgbString(z.effectColor || FX_DEFAULT_COLOR.fumee));
+    const b = zoneBBox(z.points);
+    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+    const el = document.createElement("div");
+
+    // --- aura : un halo qui épouse le contour exact de la zone dessinée ---
+    if (z.effectKind === "aura") {
+      const pts = z.points.trim().split(/\s+/).map(p => p.split(",").map(Number));
+      const d = "M" + pts.map(p => p[0] + "," + p[1]).join(" L") + " Z";
+      const beh = fxBehaviorValid("aura", z.effectBehavior) ? z.effectBehavior : "pulse";
+      const col = z.effectColor || FX_DEFAULT_COLOR.aura;
+      const c1 = hexToRgbString(col), c2 = lightenRgbString(col, 0.65);
+      const fid = "fx" + Math.random().toString(36).slice(2, 8);
+      const m = 40; // marge de flou autour de la zone (en unités du dessin)
+      const region = 'filterUnits="userSpaceOnUse" x="' + (b.minX - m) + '" y="' + (b.minY - m) + '" width="' + (b.maxX - b.minX + 2 * m) + '" height="' + (b.maxY - b.minY + 2 * m) + '"';
+      const delay = "animation-delay:-" + (Math.random() * 3).toFixed(2) + "s;";
+      // le ruban animé ne redessine que la zone de l'aura (pas toute la scène)
+      const mg = 6, rw = b.maxX - b.minX + 2 * mg, rh = b.maxY - b.minY + 2 * mg;
+      const runBox = {
+        vb: (b.minX - mg) + " " + (b.minY - mg) + " " + rw + " " + rh,
+        css: "left:" + ((b.minX - mg) / 768 * 100) + "%;top:" + ((b.minY - mg) / 512 * 100) + "%;width:" + (rw / 768 * 100) + "%;height:" + (rh / 512 * 100) + "%;"
+      };
+      el.className = "fx fx-aura";
+      el.style.cssText = "left:0;top:0;width:100%;height:100%;";
+      el.innerHTML =
+        '<svg class="aura-glow ' + (beh === "fixe" ? "" : "beh-pulse") + '" viewBox="0 0 768 512" preserveAspectRatio="none" style="' + delay + '">' +
+          '<defs>' +
+            '<filter id="' + fid + 'w" ' + region + '><feGaussianBlur stdDeviation="7"/></filter>' +
+            '<filter id="' + fid + 't" ' + region + '><feGaussianBlur stdDeviation="2.5"/></filter>' +
+          '</defs>' +
+          '<path d="' + d + '" fill="none" stroke="rgb(' + c1 + ')" stroke-width="16" stroke-linejoin="round" opacity="0.55" filter="url(#' + fid + 'w)"/>' +
+          '<path d="' + d + '" fill="rgba(' + c1 + ',0.07)" stroke="rgb(' + c1 + ')" stroke-width="4" stroke-linejoin="round" opacity="0.95" filter="url(#' + fid + 't)"/>' +
+        '</svg>' +
+        (beh === "energie"
+          ? '<svg class="aura-run" viewBox="' + runBox.vb + '" preserveAspectRatio="none" style="' + runBox.css + '">' +
+              '<path class="run-wide" d="' + d + '" pathLength="100" fill="none" stroke="rgb(' + c1 + ')" stroke-width="8" stroke-linecap="round" stroke-dasharray="7 43" opacity="0.4" style="animation-duration:' + Math.min(14, Math.max(3, polyPerimeter(pts) / 55)).toFixed(1) + 's;"/>' +
+              '<path class="run-core" d="' + d + '" pathLength="100" fill="none" stroke="rgb(' + c2 + ')" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 43" style="animation-duration:' + Math.min(14, Math.max(3, polyPerimeter(pts) / 55)).toFixed(1) + 's;"/>' +
+            '</svg>'
+          : "");
+      return el;
+    }
+
+    let w, h;
+    if (z.effectKind === "fumee") {
+      w = Math.max(b.maxX - b.minX, 10);
+      h = Math.max(b.maxY - b.minY, 14);
+      el.className = "fx fx-smoke";
+      const puffs = [[18, 0, 8], [42, 1.4, -6], [28, 2.8, 12], [52, 4.2, -10], [36, 5.6, 6]];
+      el.innerHTML = puffs.map(p =>
+        '<div class="puff" style="left:' + p[0] + '%;animation-delay:-' + p[1] + 's;--dx:' + p[2] + '%;"></div>'
+      ).join("");
+      el.style.setProperty("--c", hexToRgbString(z.effectColor || FX_DEFAULT_COLOR.fumee));
+    } else if (z.effectKind === "feu") {
+      // langues de flammes qui ondulent + halo chaud qui vacille + braises
+      w = Math.max(b.maxX - b.minX, 12);
+      h = Math.max(b.maxY - b.minY, 16);
+      el.className = "fx fx-fire";
+      const col = z.effectColor || FX_DEFAULT_COLOR.feu;
+      el.style.setProperty("--c", hexToRgbString(col));
+      el.style.setProperty("--c2", lightenRgbString(col, 0.5));
+      // [gauche %, largeur %, hauteur %, durée, décalage, forme]
+      const tongues = [[2, 46, 82, 0.85, 0, 1], [22, 56, 100, 1.05, 0.3, 0], [48, 48, 84, 0.9, 0.6, 2], [12, 38, 60, 0.75, 0.2, 2], [52, 38, 64, 0.8, 0.5, 1]];
+      const embers = [[26, 0, 120], [46, 0.9, -160], [62, 1.7, 200], [38, 2.2, -90]];
+      el.innerHTML = '<div class="fire-glow"></div><div class="flames">' +
+        tongues.map(t => '<div class="tongue shape-' + t[5] + '" style="left:' + t[0] + '%;width:' + t[1] + '%;height:' + t[2] + '%;animation-duration:' + t[3] + 's;animation-delay:-' + t[4] + 's;"></div>').join("") +
+        '</div>' +
+        embers.map(e => '<div class="ember" style="left:' + e[0] + '%;animation-delay:-' + e[1] + 's;--dx:' + e[2] + '%;"></div>').join("");
+    } else {
+      // le halo déborde un peu de la zone dessinée, pour un rendu plus naturel
+      w = Math.max(b.maxX - b.minX, 8) * 1.6;
+      h = Math.max(b.maxY - b.minY, 8) * 1.6;
+      el.className = "fx fx-light";
+      const beh = fxBehaviorValid("lumiere", z.effectBehavior) ? z.effectBehavior : "fixe";
+      const c1 = hexToRgbString(z.effectColor || FX_DEFAULT_COLOR.lumiere);
+      if (beh === "gyro") {
+        const c2 = hexToRgbString(z.effectColor2 || "#2a5bff");
+        el.innerHTML = '<div class="glow gyro-a" style="--c:' + c1 + ';"></div><div class="glow gyro-b" style="--c:' + c2 + ';"></div>';
       } else {
-        // le halo déborde un peu de la zone dessinée, pour un rendu plus naturel
-        w = Math.max(b.maxX - b.minX, 8) * 1.6;
-        h = Math.max(b.maxY - b.minY, 8) * 1.6;
-        el.className = "fx fx-light";
-        const beh = z.effectBehavior || "fixe";
-        const c1 = hexToRgbString(z.effectColor || FX_DEFAULT_COLOR.lumiere);
-        if (beh === "gyro") {
-          const c2 = hexToRgbString(z.effectColor2 || "#2a5bff");
-          el.innerHTML = '<div class="glow gyro-a" style="--c:' + c1 + ';"></div><div class="glow gyro-b" style="--c:' + c2 + ';"></div>';
-        } else {
-          const delay = "animation-delay:-" + (Math.random() * 5).toFixed(2) + "s;";
-          el.innerHTML = '<div class="glow beh-' + beh + '" style="--c:' + c1 + ';' + delay + '"></div>';
-        }
+        const delay = "animation-delay:-" + (Math.random() * 5).toFixed(2) + "s;";
+        el.innerHTML = '<div class="glow beh-' + beh + '" style="--c:' + c1 + ';' + delay + '"></div>';
       }
-      el.style.left = ((cx - w / 2) / 768 * 100) + "%";
-      el.style.top = ((cy - h / 2) / 512 * 100) + "%";
-      el.style.width = (w / 768 * 100) + "%";
-      el.style.height = (h / 512 * 100) + "%";
+    }
+    el.style.left = ((cx - w / 2) / 768 * 100) + "%";
+    el.style.top = ((cy - h / 2) / 512 * 100) + "%";
+    el.style.width = (w / 768 * 100) + "%";
+    el.style.height = (h / 512 * 100) + "%";
     return el;
   }
 
@@ -3908,14 +4040,13 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   function effectEditHtml(zone) {
     if (zone.type !== "effet") return "";
     const kind = zone.effectKind || "lumiere";
-    const beh = zone.effectBehavior || "fixe";
+    const beh = fxBehaviorValid(kind, zone.effectBehavior) ? zone.effectBehavior : fxBehaviorDefault(kind);
     const mode = zone.effectMode || "loop";
     return '<label class="zi-label">Effet</label>' +
-      '<select id="zi-fx-kind">' + fxOpt("lumiere", "Lumière", kind) + fxOpt("fumee", "Fumée", kind) + '</select>' +
-      (kind === "lumiere"
+      '<select id="zi-fx-kind">' + fxKindOptionsHtml(kind) + '</select>' +
+      (FX_BEHAVIORS[kind]
         ? '<label class="zi-label">Comportement</label>' +
-          '<select id="zi-fx-behavior">' + fxOpt("fixe", "Fixe", beh) + fxOpt("pulse", "Pulsation lente", beh) +
-          fxOpt("defaillante", "Lampe défaillante", beh) + fxOpt("gyro", "Gyrophare (2 couleurs)", beh) + '</select>'
+          '<select id="zi-fx-behavior">' + fxBehaviorOptionsHtml(kind, beh) + '</select>'
         : "") +
       '<label class="zi-label">Couleur</label>' +
       '<input type="color" id="zi-fx-color" value="' + (zone.effectColor || FX_DEFAULT_COLOR[kind]) + '">' +
@@ -3924,6 +4055,13 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         : "") +
       '<label class="zi-label">Activation</label>' +
       '<select id="zi-fx-mode">' + fxOpt("loop", "En boucle dès l\'arrivée sur la scène", mode) + fxOpt("toggle", "Au clic (allumer / éteindre)", mode) + '</select>';
+  }
+
+  // rafraîchit juste les effets (scène + inserts ouverts), sans reconstruire
+  // le panneau de réglages — sinon la palette de couleurs se refermerait
+  function refreshEffectVisuals() {
+    renderEffects();
+    renderInserts();
   }
 
   function bindEffectEdit(zone) {
@@ -3937,31 +4075,33 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     q("#zi-fx-kind").addEventListener("change", (e) => {
       zone.effectKind = e.target.value;
       zone.effectColor = FX_DEFAULT_COLOR[zone.effectKind];
-      if (zone.effectKind === "lumiere" && !zone.effectBehavior) zone.effectBehavior = "fixe";
+      if (FX_BEHAVIORS[zone.effectKind] && !fxBehaviorValid(zone.effectKind, zone.effectBehavior)) {
+        zone.effectBehavior = fxBehaviorDefault(zone.effectKind);
+      }
       if (diskMode) saveSceneToDisk();
-      renderEffects();
+      render();
       renderZoneInfo();
     });
     const behSel = q("#zi-fx-behavior");
     if (behSel) {
       behSel.addEventListener("change", (e) => {
         zone.effectBehavior = e.target.value;
-        if (zone.effectBehavior === "gyro") { zone.effectColor = "#ff2a2a"; zone.effectColor2 = "#2a5bff"; }
+        if (zone.effectKind === "lumiere" && zone.effectBehavior === "gyro") { zone.effectColor = "#ff2a2a"; zone.effectColor2 = "#2a5bff"; }
         if (diskMode) saveSceneToDisk();
-        renderEffects();
+        render();
         renderZoneInfo();
       });
     }
     q("#zi-fx-color").addEventListener("input", (e) => {
       zone.effectColor = e.target.value;
-      renderEffects();
+      refreshEffectVisuals();
       persistSoon();
     });
     const c2 = q("#zi-fx-color2");
     if (c2) {
       c2.addEventListener("input", (e) => {
         zone.effectColor2 = e.target.value;
-        renderEffects();
+        refreshEffectVisuals();
         persistSoon();
       });
     }
@@ -4365,10 +4505,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         '</div>' +
         '<div id="zf-fx-wrap" style="display:none">' +
           '<label>Effet</label>' +
-          '<select id="zf-fx-kind"><option value="lumiere">Lumière</option><option value="fumee">Fumée</option></select>' +
+          '<select id="zf-fx-kind">' + fxKindOptionsHtml("lumiere") + '</select>' +
           '<div id="zf-fx-behavior-wrap">' +
             '<label>Comportement</label>' +
-            '<select id="zf-fx-behavior"><option value="fixe">Fixe</option><option value="pulse">Pulsation lente</option><option value="defaillante">Lampe défaillante</option><option value="gyro">Gyrophare (2 couleurs)</option></select>' +
+            '<select id="zf-fx-behavior">' + fxBehaviorOptionsHtml("lumiere", "fixe") + '</select>' +
           '</div>' +
           '<label>Couleur</label>' +
           '<input type="color" id="zf-fx-color" value="#ffd27a">' +
@@ -4403,11 +4543,14 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     const fxColorIn = overlay.querySelector("#zf-fx-color");
     const fxColor2Wrap = overlay.querySelector("#zf-fx-color2-wrap");
     function syncFxVisibility() {
-      overlay.querySelector("#zf-fx-behavior-wrap").style.display = fxKindSel.value === "lumiere" ? "block" : "none";
-      fxColor2Wrap.style.display = (fxKindSel.value === "lumiere" && fxBehSel.value === "gyro") ? "block" : "none";
+      const k = fxKindSel.value;
+      overlay.querySelector("#zf-fx-behavior-wrap").style.display = FX_BEHAVIORS[k] ? "block" : "none";
+      fxColor2Wrap.style.display = (k === "lumiere" && fxBehSel.value === "gyro") ? "block" : "none";
     }
     fxKindSel.addEventListener("change", () => {
-      fxColorIn.value = FX_DEFAULT_COLOR[fxKindSel.value];
+      const k = fxKindSel.value;
+      fxColorIn.value = FX_DEFAULT_COLOR[k];
+      if (FX_BEHAVIORS[k]) fxBehSel.innerHTML = fxBehaviorOptionsHtml(k, fxBehaviorDefault(k));
       syncFxVisibility();
     });
     fxBehSel.addEventListener("change", () => {
@@ -4452,9 +4595,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         zone.effectKind = fxKindSel.value;
         zone.effectColor = fxColorIn.value;
         zone.effectMode = overlay.querySelector("#zf-fx-mode").value;
-        if (zone.effectKind === "lumiere") {
+        if (FX_BEHAVIORS[zone.effectKind]) {
           zone.effectBehavior = fxBehSel.value;
-          if (zone.effectBehavior === "gyro") zone.effectColor2 = overlay.querySelector("#zf-fx-color2").value;
+          if (zone.effectKind === "lumiere" && zone.effectBehavior === "gyro") zone.effectColor2 = overlay.querySelector("#zf-fx-color2").value;
         }
       } else if (type === "son") {
         zone.soundMode = soundMode;
