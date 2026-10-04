@@ -3475,6 +3475,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       row("Nom", zone.name) +
       row("Type", typeLabel) +
       (zone.type === "son" ? row("Mode", zone.soundMode === "unique" ? "Bruitage unique" : "Superposé (on/off)") : "") +
+      (zone.type === "son" ? row("Volume", (typeof zone.volume === "number" ? zone.volume : 100) + " %") : "") +
       (zone.type === "image" ? row("Affichage", zone.insertMode === "ephemere" ? "Éphémère (" + (zone.insertDuration || 5) + " s)" : "Reste ouvert") : "") +
       (zone.type === "effet" ? row("Effet", (zone.effectKind === "fumee" ? "Fumée" : "Lumière")) + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
       (zone.type === "scene" ? row("Cible", diskMode ? (loadedSceneNames[zone.target] || zone.target) : (SCENES[zone.target] ? SCENES[zone.target].name : zone.target)) : "");
@@ -3485,6 +3486,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   }
 
   function renderZoneInfoEdit(zone) {
+    stopZoneTest();
     const typeLabel = { image: "Image insérée", son: "Son / musique", scene: "Changement de scène", personnage: "Personnage", effet: "Effet visuel" }[zone.type] || zone.type;
     zoneInfoEl.innerHTML =
       '<label class="zi-label">Nom</label>' +
@@ -3497,6 +3499,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
           '<option value="unique"' + (zone.soundMode === "unique" ? " selected" : "") + '>Bruitage unique</option>' +
         '</select>'
         : "") +
+      soundVolumeEditHtml(zone) +
       effectEditHtml(zone) +
       imageModeEditHtml(zone) +
       '<div class="zi-actions">' +
@@ -3541,6 +3544,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     zoneInfoEl.querySelector("#zi-redraw").addEventListener("click", () => startRedraw(zone));
     bindEffectEdit(zone);
     bindImageModeEdit(zone);
+    bindSoundVolumeEdit(zone);
     zoneInfoEl.querySelector("#zi-copy").addEventListener("click", () => copyZone(zone));
 
     const assocImgBtn = zoneInfoEl.querySelector("#zi-assoc-image");
@@ -3722,6 +3726,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (zone.soundMode === "unique") {
         if (zone._url) {
           const a = new Audio(zone._url);
+          a.volume = zoneVolume(zone);
           a.play().catch(() => {});
         } else if (state.audioEnabled) {
           playSting();
@@ -3735,6 +3740,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
             a.loop = true;
             zoneAudioEls[zone.id] = a;
           }
+          zoneAudioEls[zone.id].volume = zoneVolume(zone);
           if (nowOn) zoneAudioEls[zone.id].play().catch(() => {});
           else zoneAudioEls[zone.id].pause();
         } else if (state.audioEnabled) {
@@ -3941,6 +3947,61 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (diskMode) saveSceneToDisk();
       render();
     });
+  }
+
+  // Volume propre à chaque zone son (0-100, 100 par défaut = comportement d'avant)
+  function zoneVolume(zone) {
+    const v = typeof zone.volume === "number" ? zone.volume : 100;
+    return Math.max(0, Math.min(1, v / 100));
+  }
+
+  let zoneTestAudio = null;
+  function stopZoneTest() {
+    if (zoneTestAudio) {
+      try { zoneTestAudio.pause(); } catch (e) {}
+      zoneTestAudio = null;
+    }
+  }
+
+  function soundVolumeEditHtml(zone) {
+    if (zone.type !== "son") return "";
+    const v = typeof zone.volume === "number" ? zone.volume : 100;
+    return '<label class="zi-label">Volume : <span id="zi-vol-val">' + v + '</span> %</label>' +
+      '<input type="range" id="zi-volume" class="weather-slider" min="0" max="100" step="1" value="' + v + '">' +
+      (zone._url ? '<button type="button" id="zi-sound-test" class="effect-btn">▶ Tester le son</button>' : "");
+  }
+
+  function bindSoundVolumeEdit(zone) {
+    if (zone.type !== "son") return;
+    const slider = zoneInfoEl.querySelector("#zi-volume");
+    const label = zoneInfoEl.querySelector("#zi-vol-val");
+    let saveTimer = null;
+    slider.addEventListener("input", () => {
+      zone.volume = parseInt(slider.value, 10);
+      label.textContent = zone.volume;
+      if (zoneAudioEls[zone.id]) zoneAudioEls[zone.id].volume = zoneVolume(zone);
+      if (zoneTestAudio) zoneTestAudio.volume = zoneVolume(zone);
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => { if (diskMode) saveSceneToDisk(); }, 400);
+    });
+    const testBtn = zoneInfoEl.querySelector("#zi-sound-test");
+    if (testBtn) {
+      testBtn.addEventListener("click", () => {
+        if (zoneTestAudio) {
+          stopZoneTest();
+          testBtn.textContent = "▶ Tester le son";
+          return;
+        }
+        const a = new Audio(zone._url);
+        a.volume = zoneVolume(zone);
+        zoneTestAudio = a;
+        testBtn.textContent = "■ Arrêter";
+        a.addEventListener("ended", () => {
+          if (zoneTestAudio === a) { zoneTestAudio = null; testBtn.textContent = "▶ Tester le son"; }
+        });
+        a.play().catch(() => {});
+      });
+    }
   }
 
   function imageModeEditHtml(zone) {
