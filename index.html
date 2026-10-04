@@ -464,6 +464,7 @@
 
   /* ---------- Effets visuels de zone (lumière, fumée) ---------- */
   #effects-layer { position: absolute; inset: 0; pointer-events: none; }
+  .insert-fx-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
   .fx { position: absolute; pointer-events: none; }
   .fx-light { mix-blend-mode: screen; }
   .fx-light .glow {
@@ -3317,6 +3318,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
             poly.setAttribute("points", zone.points);
             poly.classList.add("zone-shape");
             poly.dataset.zoneId = zone.id;
+            if ((zone.type === "son" && zone.soundMode === "superpose" && state.soundOn[zone.id]) ||
+                (zone.type === "effet" && zone.effectMode === "toggle" && state.effectsOn[zone.id])) {
+              poly.classList.add("sound-on");
+            }
             poly.addEventListener("click", (e) => {
               e.stopPropagation();
               onZoneClick(zone, state.insertStack.slice());
@@ -3410,6 +3415,16 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         '<div class="cap">' + zone.insert.caption + '</div>';
     }
     bodyWrap.appendChild(placeholder);
+
+    // effets (lumière, fumée…) posés sur cette image
+    const fxLayer = document.createElement("div");
+    fxLayer.className = "insert-fx-layer";
+    (zone.insert.nested || []).forEach(z => {
+      if (z.type !== "effet") return;
+      const el = createEffectElement(z);
+      if (el) fxLayer.appendChild(el);
+    });
+    bodyWrap.appendChild(fxLayer);
 
     const zoneSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     zoneSvg.classList.add("zones", "insert-zone-svg");
@@ -3760,6 +3775,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   function startEphemeralClose(openStack, parentStack, ms) {
     clearTimeout(ephemeralTimer);
     ephemeralTimer = setTimeout(() => {
+      if (state.mode === "edit") return; // jamais pendant qu'on édite
       if (JSON.stringify(state.insertStack) === JSON.stringify(openStack)) setInsertStack(parentStack);
     }, ms);
   }
@@ -3790,6 +3806,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       state.mode = btn.dataset.mode;
       if (state.mode === "player") requestStateFromPeers();
       if (state.mode !== "edit") cancelDrawing();
+      if (state.mode === "edit") clearTimeout(ephemeralTimer); // on édite : le compte à rebours s'arrête
       closeNotesFloating();
       closeScenesMosaic();
       updateDeleteBtnVisibility();
@@ -3830,18 +3847,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
   }
 
-  function renderEffects() {
-    const layer = document.getElementById("effects-layer");
-    if (!layer) return;
-    const fxZones = ZONES.filter(z => z.type === "effet");
-    // on ne reconstruit que si quelque chose a vraiment changé, sinon les
-    // animations repartiraient de zéro à chaque clic
-    const sig = JSON.stringify(fxZones.map(z => [z.id, z.points, z.effectKind, z.effectColor, z.effectColor2, z.effectBehavior, effectIsActive(z)]));
-    if (sig === effectsSignature) return;
-    effectsSignature = sig;
-    layer.innerHTML = "";
-    fxZones.forEach(z => {
-      if (!effectIsActive(z)) return;
+  // Construit l'élément visuel d'un effet (null s'il est éteint)
+  function createEffectElement(z) {
+    if (!effectIsActive(z)) return null;
       const b = zoneBBox(z.points);
       const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
       const el = document.createElement("div");
@@ -3874,7 +3882,22 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       el.style.top = ((cy - h / 2) / 512 * 100) + "%";
       el.style.width = (w / 768 * 100) + "%";
       el.style.height = (h / 512 * 100) + "%";
-      layer.appendChild(el);
+    return el;
+  }
+
+  function renderEffects() {
+    const layer = document.getElementById("effects-layer");
+    if (!layer) return;
+    const fxZones = ZONES.filter(z => z.type === "effet");
+    // on ne reconstruit que si quelque chose a vraiment changé, sinon les
+    // animations repartiraient de zéro à chaque clic
+    const sig = JSON.stringify(fxZones.map(z => [z.id, z.points, z.effectKind, z.effectColor, z.effectColor2, z.effectBehavior, effectIsActive(z)]));
+    if (sig === effectsSignature) return;
+    effectsSignature = sig;
+    layer.innerHTML = "";
+    fxZones.forEach(z => {
+      const el = createEffectElement(z);
+      if (el) layer.appendChild(el);
     });
   }
 
@@ -4093,10 +4116,6 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     if (!diskMode || !currentSceneDirHandle) { showToast("Charge une scène pour y coller la zone.", true); return; }
     const parentStack = state.insertStack.slice();
     const src = zoneClipboard.zone;
-    if (src.type === "effet" && parentStack.length > 0) {
-      showToast("Les effets ne se posent que sur la scène principale.", true);
-      return;
-    }
     const list = getInsertionList(parentStack);
     if (!list) return;
 
@@ -4326,7 +4345,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
           '<option value="image">Image insérée</option>' +
           '<option value="son">Son / musique</option>' +
           '<option value="scene">Changement de scène</option>' +
-          (parentStack.length === 0 ? '<option value="effet">Effet visuel (lumière, fumée…)</option>' : '') +
+          '<option value="effet">Effet visuel (lumière, fumée…)</option>' +
         '</select>' +
         '<div id="zf-img-wrap">' +
           '<label>Affichage</label>' +
