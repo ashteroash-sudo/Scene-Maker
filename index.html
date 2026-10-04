@@ -1524,6 +1524,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let currentSceneMeta = { background: null, music: null };
   let bgObjectURL = null;
   let musicObjectURL = null;
+  let currentMusicFingerprint = null; // empreinte du morceau en cours (pour ne pas le relancer d'une scène à l'autre)
   let scenesList = [];
   let scenesMosaicOpen = false;
   const sceneThumbURLs = {}; // nom de scène -> URL de la vignette (fond)
@@ -2622,6 +2623,33 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   });
 
 
+  // Empreinte rapide d'un fichier audio : sa taille + 3 extraits (début,
+  // milieu, fin). Sert à reconnaître "le même morceau" d'une scène à l'autre
+  // même si chaque scène en garde sa propre copie sous le même nom.
+  async function fingerprintFile(file) {
+    try {
+      const size = file.size;
+      const chunk = 65536;
+      const mid = Math.floor(size / 2);
+      const parts = [
+        file.slice(0, chunk),
+        file.slice(Math.max(0, mid - chunk / 2), mid + chunk / 2),
+        file.slice(Math.max(0, size - chunk))
+      ];
+      let h = 2166136261;
+      for (const part of parts) {
+        const bytes = new Uint8Array(await part.arrayBuffer());
+        for (let i = 0; i < bytes.length; i++) {
+          h ^= bytes[i];
+          h = Math.imul(h, 16777619);
+        }
+      }
+      return size + ":" + (h >>> 0).toString(16);
+    } catch (e) {
+      return null;
+    }
+  }
+
   async function loadSceneFromDisk(folderName) {
     let sceneDir;
     try {
@@ -2649,18 +2677,26 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       } catch (e) {}
     }
 
-    if (musicObjectURL) URL.revokeObjectURL(musicObjectURL);
-    musicObjectURL = null;
-    musicAudioEl.pause();
+    // Même musique que la scène précédente ? Alors on la laisse tourner,
+    // sans la couper ni la relancer à zéro.
+    let newMusicFile = null;
     if (sceneData.music) {
       try {
         const musiquesDir = await sceneDir.getDirectoryHandle("musiques");
         const fh = await musiquesDir.getFileHandle(sceneData.music);
-        const file = await fh.getFile();
-        musicObjectURL = URL.createObjectURL(file);
+        newMusicFile = await fh.getFile();
       } catch (e) {}
     }
-    musicAudioEl.src = musicObjectURL || "";
+    const newFingerprint = newMusicFile ? await fingerprintFile(newMusicFile) : null;
+    const keepMusic = !!(newFingerprint && newFingerprint === currentMusicFingerprint && musicObjectURL);
+    if (!keepMusic) {
+      if (musicObjectURL) URL.revokeObjectURL(musicObjectURL);
+      musicObjectURL = null;
+      musicAudioEl.pause();
+      if (newMusicFile) musicObjectURL = URL.createObjectURL(newMusicFile);
+      musicAudioEl.src = musicObjectURL || "";
+      currentMusicFingerprint = newFingerprint;
+    }
 
     diskMode = true;
     currentSceneDirHandle = sceneDir;
@@ -2974,6 +3010,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     musicObjectURL = null;
     musicAudioEl.pause();
     musicAudioEl.src = "";
+    currentMusicFingerprint = null;
     currentSceneDirHandle = null;
     currentSceneName = null;
     currentSceneMeta = { background: null, music: null };
@@ -3616,6 +3653,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     if (musicObjectURL) URL.revokeObjectURL(musicObjectURL);
     musicObjectURL = URL.createObjectURL(file);
     currentSceneMeta.music = destName;
+    currentMusicFingerprint = await fingerprintFile(file);
     musicAudioEl.src = musicObjectURL;
     musicAudioEl.volume = musicVolume / 100;
     if (state.mode !== "player") musicAudioEl.play().catch(() => {});
