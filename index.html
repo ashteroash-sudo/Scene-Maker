@@ -546,6 +546,25 @@
   #zone-clipboard-bar { padding: 0 14px 10px; }
   .zi-hint { font-size: 0.7rem; color: var(--ink-dim); margin: -2px 0 8px; }
 
+  /* effets "devant les personnages" (masqués quand un insert est ouvert) */
+  #effects-front-layer { position: absolute; inset: 0; pointer-events: none; z-index: 13; }
+  /* un effet "en boucle" ne se clique pas en jeu : il ne doit jamais bloquer ce qui est dessous */
+  body.mode-mj .zone-shape.fx-passive,
+  body.mode-player .zone-shape.fx-passive { pointer-events: none; stroke: transparent; fill: transparent; }
+  .zi-check { display: flex; align-items: center; gap: 8px; font-size: 0.82rem; color: var(--ink); margin: 2px 0 8px; cursor: pointer; }
+  .zi-check input { accent-color: var(--gold); cursor: pointer; }
+  /* brume au sol (particules sur canvas) : fondu sur les côtés et vers le haut */
+  .fx-mist .mist-h {
+    position: absolute; inset: 0;
+    -webkit-mask-image: linear-gradient(to right, transparent 0%, #000 20%, #000 80%, transparent 100%);
+    mask-image: linear-gradient(to right, transparent 0%, #000 20%, #000 80%, transparent 100%);
+  }
+  .fx-mist .mist-canvas {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    -webkit-mask-image: linear-gradient(to top, transparent 0%, #000 14%, #000 45%, transparent 100%);
+    mask-image: linear-gradient(to top, transparent 0%, #000 14%, #000 45%, transparent 100%);
+  }
+
   /* ---------- Orage (éclair) ---------- */
   #weather-storm {
     position: absolute;
@@ -1320,6 +1339,7 @@
         <div id="effects-layer"></div>
         <div id="labels-layer"></div>
         <div id="npc-portrait-layer"></div>
+        <div id="effects-front-layer"></div>
         <canvas id="weather-canvas"></canvas>
         <div id="weather-fog">
           <div class="fog-base"></div>
@@ -3272,15 +3292,40 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     }
   }
 
+  function pointInPolygon(x, y, pointsStr) {
+    const pts = pointsStr.trim().split(/\s+/).map(p => p.split(",").map(Number));
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const xi = pts[i][0], yi = pts[i][1], xj = pts[j][0], yj = pts[j][1];
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  }
+
+  // En Édition, quand plusieurs zones se superposent à l'endroit cliqué, chaque
+  // clic passe à la zone suivante en dessous (sinon la zone du dessus bloque
+  // l'accès aux autres).
+  function pickStackedZone(zone, list, svgEl, evt) {
+    if (state.mode !== "edit" || !svgEl || !evt || typeof svgEl.createSVGPoint !== "function") return zone;
+    const p = svgPointFromEvent(svgEl, evt);
+    const stack = list.filter(z => pointInPolygon(p.x, p.y, z.points)).reverse(); // du dessus vers le dessous
+    if (stack.length < 2) return zone;
+    const i = stack.findIndex(z => z.id === state.selectedZoneId);
+    const next = stack[(i + 1) % stack.length];
+    showToast(stack.length + " zones superposées ici — sélection : « " + next.name + " » (" + (stack.indexOf(next) + 1) + "/" + stack.length + "). Reclique pour la suivante.");
+    return next;
+  }
+
   function makeShape(zone, parentStack) {
     const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
     poly.setAttribute("points", zone.points);
     poly.classList.add("zone-shape");
+    if (zone.type === "effet" && zone.effectMode !== "toggle") poly.classList.add("fx-passive");
     poly.dataset.zoneId = zone.id;
     if ((zone.type === "son" && zone.soundMode === "superpose" && state.soundOn[zone.id]) || (zone.type === "effet" && zone.effectMode === "toggle" && state.effectsOn[zone.id])) {
       poly.classList.add("sound-on");
     }
-    poly.addEventListener("click", () => onZoneClick(zone, parentStack));
+    poly.addEventListener("click", (e) => onZoneClick(pickStackedZone(zone, ZONES, svg, e), parentStack));
     return poly;
   }
 
@@ -3326,6 +3371,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
             const poly = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
             poly.setAttribute("points", zone.points);
             poly.classList.add("zone-shape");
+            if (zone.type === "effet" && zone.effectMode !== "toggle") poly.classList.add("fx-passive");
             poly.dataset.zoneId = zone.id;
             if ((zone.type === "son" && zone.soundMode === "superpose" && state.soundOn[zone.id]) ||
                 (zone.type === "effet" && zone.effectMode === "toggle" && state.effectsOn[zone.id])) {
@@ -3333,7 +3379,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
             }
             poly.addEventListener("click", (e) => {
               e.stopPropagation();
-              onZoneClick(zone, state.insertStack.slice());
+              onZoneClick(pickStackedZone(zone, list, svgWrap, e), state.insertStack.slice());
             });
             svgWrap.appendChild(poly);
           }
@@ -3501,7 +3547,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       (zone.type === "son" ? row("Mode", zone.soundMode === "unique" ? "Bruitage unique" : "Superposé (on/off)") : "") +
       (zone.type === "son" ? row("Volume", (typeof zone.volume === "number" ? zone.volume : 100) + " %") : "") +
       (zone.type === "image" ? row("Affichage", zone.insertMode === "ephemere" ? "Éphémère (" + (zone.insertDuration || 5) + " s)" : "Reste ouvert") : "") +
-      (zone.type === "effet" ? row("Effet", fxKindLabel(zone.effectKind)) + ((zone.effectKind === "feu" || zone.effectKind === "fumee") ? row(zone.effectKind === "fumee" ? "Densité" : "Intensité", Math.round(fireIntensity(zone) * 100) + " / 100") : "") + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
+      (zone.type === "effet" ? row("Effet", fxKindLabel(zone.effectKind)) + (fxHasIntensity(zone.effectKind) ? row(fxIntensityWord(zone.effectKind), Math.round(fireIntensity(zone) * 100) + " / 100") : "") + (zone.effectFront ? row("Position", "Devant les personnages") : "") + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
       (zone.type === "scene" ? row("Cible", diskMode ? (loadedSceneNames[zone.target] || zone.target) : (SCENES[zone.target] ? SCENES[zone.target].name : zone.target)) : "");
   }
 
@@ -3836,21 +3882,31 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   // allumés/éteints au clic en MJ.
   // ---------------------------------------------------------------
 
-  const FX_DEFAULT_COLOR = { lumiere: "#ffd27a", fumee: "#cfd3d8", feu: "#ff8a1f", aura: "#b07cff" };
-  const FX_KINDS = [["lumiere", "Lumière"], ["fumee", "Fumée"], ["feu", "Feu"], ["aura", "Aura (contour de la zone)"]];
+  const FX_DEFAULT_COLOR = { lumiere: "#ffd27a", fumee: "#cfd3d8", feu: "#ff8a1f", aura: "#b07cff", brume: "#dfe6ee" };
+  const FX_KINDS = [["lumiere", "Lumière"], ["fumee", "Fumée"], ["feu", "Feu"], ["aura", "Aura (contour de la zone)"], ["brume", "Brume au sol"]];
   // comportements disponibles selon l'effet (feu et fumée n'en ont pas)
   const FX_BEHAVIORS = {
     lumiere: [["fixe", "Fixe"], ["pulse", "Pulsation lente"], ["defaillante", "Lampe défaillante"], ["gyro", "Gyrophare (2 couleurs)"]],
-    aura: [["fixe", "Fixe"], ["pulse", "Pulsation douce"], ["energie", "Énergie qui court le long du bord"]]
+    aura: [["fixe", "Fixe"], ["pulse", "Pulsation douce"], ["energie", "Énergie qui court le long du bord"]],
+    brume: [["droite", "Vent vers la droite"], ["gauche", "Vent vers la gauche"], ["aucun", "Immobile"]]
   };
-  function fxBehaviorDefault(kind) { return kind === "aura" ? "pulse" : "fixe"; }
+  function fxBehaviorDefault(kind) { return kind === "aura" ? "pulse" : kind === "brume" ? "droite" : "fixe"; }
   function fxBehaviorValid(kind, b) { return !!(FX_BEHAVIORS[kind] && FX_BEHAVIORS[kind].some(x => x[0] === b)); }
   function fxBehaviorOptionsHtml(kind, current) { return (FX_BEHAVIORS[kind] || []).map(x => fxOpt(x[0], x[1], current)).join(""); }
   function fxKindOptionsHtml(current) { return FX_KINDS.map(x => fxOpt(x[0], x[1], current)).join(""); }
   function fxKindLabel(kind) { const k = FX_KINDS.find(x => x[0] === kind); return k ? k[1] : "Lumière"; }
+  // effets qui ont un curseur (intensité du feu, densité de la fumée et de la brume)
+  function fxHasIntensity(kind) { return kind === "feu" || kind === "fumee" || kind === "brume"; }
+  function fxIntensityWord(kind) { return kind === "feu" ? "Intensité" : "Densité"; }
+  function fxIntensityHint(kind) {
+    return kind === "feu" ? "bougie ← feu de cheminée → brasier"
+      : kind === "brume" ? "voile léger ← → brouillard épais"
+      : "voile léger ← → fumée épaisse";
+  }
   const FX_DEFAULT_INTENSITY = 35; // 0 bougie ... 35 feu de cheminée ... 100 brasier
+  function fxDefaultIntensity(kind) { return kind === "brume" ? 55 : FX_DEFAULT_INTENSITY; }
   function fireIntensity(z) {
-    const v = typeof z.effectIntensity === "number" ? z.effectIntensity : FX_DEFAULT_INTENSITY;
+    const v = typeof z.effectIntensity === "number" ? z.effectIntensity : fxDefaultIntensity(z.effectKind);
     return Math.max(0, Math.min(100, v)) / 100;
   }
   function lightenRgbString(hex, amt) {
@@ -3930,6 +3986,27 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     return lut;
   }
 
+  // Palette de la brume : claire et translucide, jamais sombre
+  function getMistLut(rgb) {
+    const key = "m" + rgb.join(",");
+    if (fireLutCache.has(key)) return fireLutCache.get(key);
+    const dk = (k) => rgb.map(v => v * k);
+    const stops = [[0, rgb, 0], [0.06, rgb, 0], [0.4, rgb, 0.26], [0.8, dk(0.96), 0.46], [1, dk(0.9), 0.62]];
+    const lut = { R: new Uint8ClampedArray(256), G: new Uint8ClampedArray(256), B: new Uint8ClampedArray(256), A: new Uint8ClampedArray(256) };
+    for (let h = 0; h < 256; h++) {
+      const u = h / 255;
+      let k = 0;
+      while (k < stops.length - 2 && u > stops[k + 1][0]) k++;
+      const s0 = stops[k], s1 = stops[k + 1];
+      const f = Math.max(0, Math.min(1, (u - s0[0]) / (s1[0] - s0[0])));
+      const c = mixRgb(s0[1], s1[1], f);
+      lut.R[h] = c[0]; lut.G[h] = c[1]; lut.B[h] = c[2];
+      lut.A[h] = (s0[2] + (s1[2] - s0[2]) * f) * 255;
+    }
+    fireLutCache.set(key, lut);
+    return lut;
+  }
+
   // Palette de la fumée : transparente sur les bords, de plus en plus opaque et
   // sombre au cœur du panache (ça donne du volume)
   function getSmokeLut(rgb) {
@@ -3970,7 +4047,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       fireFilterSvg.style.position = "absolute";
       document.body.appendChild(fireFilterSvg);
     }
-    const lut = kind === "fumee" ? getSmokeLut(rgb) : getFireLut(rgb);
+    const lut = kind === "fumee" ? getSmokeLut(rgb) : kind === "brume" ? getMistLut(rgb) : getFireLut(rgb);
     const N = 33;
     const tv = (arr) => {
       const out = [];
@@ -4277,6 +4354,105 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     return el;
   }
 
+  // Brume au sol : de grosses nappes aplaties, plus épaisses près du sol, qui
+  // dérivent lentement dans le sens du vent, se tordent et se dissipent.
+  function stepMist(em, dt, draw) {
+    em.time += dt;
+    em.acc += em.rate * dt;
+    while (em.acc >= 1) {
+      em.acc -= 1;
+      if (em.parts.length >= em.maxP) { em.acc = 0; break; }
+      const life = 6 + Math.random() * 5;
+      // on fait naître les nappes un peu en amont du vent, pour que la zone
+      // soit déjà pleine côté "sous le vent"
+      let sx = em.x0 + Math.random() * em.wPx;
+      if (em.windV > 0) sx -= Math.random() * em.ext;
+      else if (em.windV < 0) sx += Math.random() * em.ext;
+      em.parts.push({
+        x: sx,
+        y: em.baseY - Math.pow(Math.random(), 1.5) * em.hPx * 0.7,
+        age: 0, life,
+        vx: em.windV * (0.6 + Math.random() * 0.8) + gauss() * em.S * 0.03,
+        vy: -em.hPx * (0.01 + Math.random() * 0.03),
+        rx0: em.S * (0.6 + Math.random() * 0.6),
+        ph: Math.random() * 6.283, fr: 0.3 + Math.random() * 0.5, wob: em.S * (0.08 + Math.random() * 0.2),
+        sp: (Math.random() * 4) | 0
+      });
+    }
+    const ctx = em.ctx;
+    if (draw) {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, em.W, em.H);
+      ctx.globalCompositeOperation = "lighter";
+    }
+    for (let i = em.parts.length - 1; i >= 0; i--) {
+      const p = em.parts[i];
+      p.age += dt;
+      if (p.age >= p.life) { em.parts[i] = em.parts[em.parts.length - 1]; em.parts.pop(); continue; }
+      const u = p.age / p.life;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      if (draw) {
+        const rx = p.rx0 * (0.8 + 0.6 * u), ry = rx * 0.42;
+        const fade = (u < 0.22 ? u / 0.22 : 1) * Math.pow(1 - u, 1.2);
+        ctx.globalAlpha = Math.min(1, em.alpha * fade);
+        ctx.drawImage(em.sprites[p.sp], p.x + Math.sin(p.age * p.fr + p.ph) * p.wob - rx, p.y - ry, rx * 2, ry * 2);
+      }
+    }
+    if (draw) ctx.globalAlpha = 1;
+  }
+
+  const MIST_ALPHA = 0.24, MIST_C0 = 6.5, MIST_C1 = 17, MIST_SIZE = 1.2;
+  function createMistElement(z, b) {
+    const d = fireIntensity(z); // densité : 0 = voile léger, 100 = brouillard épais
+    const col = z.effectColor || FX_DEFAULT_COLOR.brume;
+    const rgb = hexToRgbString(col).split(",").map(Number);
+    const w = Math.max(b.maxX - b.minX, 30), h = Math.max(b.maxY - b.minY, 14);
+    const dir = z.effectBehavior === "gauche" ? -1 : (z.effectBehavior === "aucun" ? 0 : 1);
+    const mx = w * 0.12;
+    const reg = { left: b.minX - mx, right: b.maxX + mx, top: b.minY - h * 0.2, bottom: b.maxY + h * 0.35 };
+    const regW = reg.right - reg.left, regH = reg.bottom - reg.top;
+    const PPU = 0.5; // une brume est très floue : un petit canvas suffit
+
+    const el = document.createElement("div");
+    el.className = "fx fx-mist";
+    el.style.left = (reg.left / 768 * 100) + "%";
+    el.style.top = (reg.top / 512 * 100) + "%";
+    el.style.width = (regW / 768 * 100) + "%";
+    el.style.height = (regH / 512 * 100) + "%";
+    const hWrap = document.createElement("div");
+    hWrap.className = "mist-h";
+    const canvas = document.createElement("canvas");
+    canvas.className = "mist-canvas";
+    canvas.width = Math.max(8, Math.round(regW * PPU));
+    canvas.height = Math.max(8, Math.round(regH * PPU));
+    canvas.style.filter = "url(#" + getFireFilterId(rgb, "brume") + ")";
+    hWrap.appendChild(canvas);
+    el.appendChild(hWrap);
+
+    const wPx = w * PPU;
+    const windV = dir * wPx * 0.05;
+    // le nombre de nappes se déduit de la surface à couvrir (et de la densité),
+    // pas d'un débit fixe : sinon tout sature en une grande dalle grise
+    const rxBase = h * 0.85 * MIST_SIZE;                 // largeur moyenne d'une nappe (unités)
+    const coverage = MIST_C0 + MIST_C1 * d;              // recouvrement moyen visé
+    const nPuffs = 0.82 * coverage * (w / h) / (MIST_SIZE * MIST_SIZE);
+    const rate = nPuffs / 8.5;                           // 8,5 s = durée de vie moyenne
+    const em = {
+      canvas, ctx: canvas.getContext("2d"), W: canvas.width, H: canvas.height,
+      x0: mx * PPU, wPx, baseY: (b.maxY - reg.top - h * 0.08) * PPU, hPx: h * PPU,
+      S: rxBase * PPU, windV, ext: Math.abs(windV) * 6,
+      sprites: getSmokeSprites(), alpha: MIST_ALPHA,
+      rate, maxP: Math.ceil(nPuffs * 2) + 6, parts: [], acc: 0, time: 0, step: stepMist
+    };
+    for (let k = 0; k < 120; k++) stepMist(em, 0.1, false); // la brume est déjà installée à l'affichage
+    fireEmitters.add(em);
+    startFireLoop();
+    return el;
+  }
+
   function createFireElement(z, b) {
     const t = fireIntensity(z);
     const col = z.effectColor || FX_DEFAULT_COLOR.feu;
@@ -4397,6 +4573,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     let w, h;
     if (z.effectKind === "fumee") {
       return createSmokeElement(z, b);
+    } else if (z.effectKind === "brume") {
+      return createMistElement(z, b);
     } else if (z.effectKind === "feu") {
       return createFireElement(z, b);
     } else {
@@ -4423,17 +4601,22 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   function renderEffects() {
     const layer = document.getElementById("effects-layer");
+    const front = document.getElementById("effects-front-layer");
     if (!layer) return;
+    // les effets "devant les personnages" se masquent quand un insert est ouvert
+    if (front) front.style.display = state.insertStack.length > 0 ? "none" : "";
     const fxZones = ZONES.filter(z => z.type === "effet");
     // on ne reconstruit que si quelque chose a vraiment changé, sinon les
     // animations repartiraient de zéro à chaque clic
-    const sig = JSON.stringify(fxZones.map(z => [z.id, z.points, z.effectKind, z.effectColor, z.effectColor2, z.effectBehavior, z.effectIntensity, effectIsActive(z)]));
+    const sig = JSON.stringify(fxZones.map(z => [z.id, z.points, z.effectKind, z.effectColor, z.effectColor2, z.effectBehavior, z.effectIntensity, !!z.effectFront, effectIsActive(z)]));
     if (sig === effectsSignature) return;
     effectsSignature = sig;
     layer.innerHTML = "";
+    if (front) front.innerHTML = "";
     fxZones.forEach(z => {
       const el = createEffectElement(z);
-      if (el) layer.appendChild(el);
+      if (!el) return;
+      (z.effectFront && front ? front : layer).appendChild(el);
     });
   }
 
@@ -4454,16 +4637,24 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         : "") +
       '<label class="zi-label">Couleur</label>' +
       '<input type="color" id="zi-fx-color" value="' + (zone.effectColor || FX_DEFAULT_COLOR[kind]) + '">' +
-      (kind === "feu" || kind === "fumee"
-        ? '<label class="zi-label">' + (kind === "fumee" ? "Densité" : "Intensité") + ' : <span id="zi-fx-int-val">' + Math.round(fireIntensity(zone) * 100) + '</span> / 100</label>' +
+      (fxHasIntensity(kind)
+        ? '<label class="zi-label">' + fxIntensityWord(kind) + ' : <span id="zi-fx-int-val">' + Math.round(fireIntensity(zone) * 100) + '</span> / 100</label>' +
           '<input type="range" id="zi-fx-intensity" class="weather-slider" min="0" max="100" step="1" value="' + Math.round(fireIntensity(zone) * 100) + '">' +
-          '<div class="zi-hint">' + (kind === "fumee" ? "voile léger ← → fumée épaisse" : "bougie ← feu de cheminée → brasier") + '</div>'
+          '<div class="zi-hint">' + fxIntensityHint(kind) + '</div>'
         : "") +
       (kind === "lumiere" && beh === "gyro"
         ? '<label class="zi-label">Seconde couleur</label><input type="color" id="zi-fx-color2" value="' + (zone.effectColor2 || "#2a5bff") + '">'
         : "") +
       '<label class="zi-label">Activation</label>' +
-      '<select id="zi-fx-mode">' + fxOpt("loop", "En boucle dès l\'arrivée sur la scène", mode) + fxOpt("toggle", "Au clic (allumer / éteindre)", mode) + '</select>';
+      '<select id="zi-fx-mode">' + fxOpt("loop", "En boucle dès l\'arrivée sur la scène", mode) + fxOpt("toggle", "Au clic (allumer / éteindre)", mode) + '</select>' +
+      (fxIsRootZone(zone)
+        ? '<label class="zi-check"><input type="checkbox" id="zi-fx-front"' + (zone.effectFront ? " checked" : "") + '> Passe devant les personnages</label>'
+        : "");
+  }
+
+  function fxIsRootZone(zone) {
+    const ctx = findZoneContext(zone.id);
+    return !ctx || ctx.parentStack.length === 0;
   }
 
   // rafraîchit juste les effets (scène + inserts ouverts), sans reconstruire
@@ -4521,6 +4712,14 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         q("#zi-fx-int-val").textContent = zone.effectIntensity;
         refreshEffectVisuals();
         persistSoon();
+      });
+    }
+    const frontCb = q("#zi-fx-front");
+    if (frontCb) {
+      frontCb.addEventListener("change", () => {
+        zone.effectFront = frontCb.checked;
+        if (diskMode) saveSceneToDisk();
+        render();
       });
     }
     q("#zi-fx-mode").addEventListener("change", (e) => {
@@ -4936,6 +5135,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
           '<div id="zf-fx-color2-wrap" style="display:none"><label>Seconde couleur</label><input type="color" id="zf-fx-color2" value="#2a5bff"></div>' +
           '<label>Activation</label>' +
           '<select id="zf-fx-mode"><option value="loop">En boucle dès l\'arrivée sur la scène</option><option value="toggle">Au clic (allumer / éteindre)</option></select>' +
+          (parentStack.length === 0 ? '<label class="zi-check"><input type="checkbox" id="zf-fx-front"> Passe devant les personnages</label>' : '') +
         '</div>' +
         '<div class="form-actions">' +
           '<button id="zf-cancel">Annuler</button>' +
@@ -4967,9 +5167,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       const k = fxKindSel.value;
       overlay.querySelector("#zf-fx-behavior-wrap").style.display = FX_BEHAVIORS[k] ? "block" : "none";
       fxColor2Wrap.style.display = (k === "lumiere" && fxBehSel.value === "gyro") ? "block" : "none";
-      overlay.querySelector("#zf-fx-intensity-wrap").style.display = (k === "feu" || k === "fumee") ? "block" : "none";
-      overlay.querySelector("#zf-fx-int-name").textContent = k === "fumee" ? "Densité" : "Intensité";
-      overlay.querySelector("#zf-fx-int-hint").textContent = k === "fumee" ? "voile léger ← → fumée épaisse" : "bougie ← feu de cheminée → brasier";
+      overlay.querySelector("#zf-fx-intensity-wrap").style.display = fxHasIntensity(k) ? "block" : "none";
+      overlay.querySelector("#zf-fx-int-name").textContent = fxIntensityWord(k);
+      overlay.querySelector("#zf-fx-int-hint").textContent = fxIntensityHint(k);
     }
     overlay.querySelector("#zf-fx-intensity").addEventListener("input", (e) => {
       overlay.querySelector("#zf-fx-int-val").textContent = e.target.value;
@@ -4978,6 +5178,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       const k = fxKindSel.value;
       fxColorIn.value = FX_DEFAULT_COLOR[k];
       if (FX_BEHAVIORS[k]) fxBehSel.innerHTML = fxBehaviorOptionsHtml(k, fxBehaviorDefault(k));
+      if (fxHasIntensity(k)) {
+        overlay.querySelector("#zf-fx-intensity").value = fxDefaultIntensity(k);
+        overlay.querySelector("#zf-fx-int-val").textContent = fxDefaultIntensity(k);
+      }
       syncFxVisibility();
     });
     fxBehSel.addEventListener("change", () => {
@@ -5022,7 +5226,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         zone.effectKind = fxKindSel.value;
         zone.effectColor = fxColorIn.value;
         zone.effectMode = overlay.querySelector("#zf-fx-mode").value;
-        if (zone.effectKind === "feu" || zone.effectKind === "fumee") zone.effectIntensity = parseInt(overlay.querySelector("#zf-fx-intensity").value, 10);
+        const frontBox = overlay.querySelector("#zf-fx-front");
+        if (frontBox && frontBox.checked) zone.effectFront = true;
+        if (fxHasIntensity(zone.effectKind)) zone.effectIntensity = parseInt(overlay.querySelector("#zf-fx-intensity").value, 10);
         if (FX_BEHAVIORS[zone.effectKind]) {
           zone.effectBehavior = fxBehSel.value;
           if (zone.effectKind === "lumiere" && zone.effectBehavior === "gyro") zone.effectColor2 = overlay.querySelector("#zf-fx-color2").value;
