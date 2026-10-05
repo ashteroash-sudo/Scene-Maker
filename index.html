@@ -546,6 +546,39 @@
   #zone-clipboard-bar { padding: 0 14px 10px; }
   .zi-hint { font-size: 0.7rem; color: var(--ink-dim); margin: -2px 0 8px; }
 
+  /* images "posées" : l'image s'affiche à la place et à la taille de la zone, sans cadre */
+  #placed-layer { position: absolute; inset: 0; pointer-events: none; z-index: 14; }
+  .insert-placed-layer { position: absolute; inset: 0; pointer-events: none; }
+  .placed-img { position: absolute; pointer-events: none; }
+  .placed-img img {
+    width: 100%; height: 100%; object-fit: contain; display: block;
+    filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.6));
+  }
+  /* une image posée déjà retournée cache son contour en MJ (il réapparaît au survol, pour la remasquer) */
+  body.mode-mj .zone-shape.placed-on:not(:hover) { stroke: transparent; }
+  .placed-img.preview { opacity: 0.6; }
+  .placed-img.clipped img { filter: none; }
+  .placed-img img.reveal { animation: placed-in 0.45s ease-out both; }
+  @keyframes placed-in {
+    0% { opacity: 0; transform: perspective(700px) rotateY(88deg) scale(0.88); }
+    60% { opacity: 1; }
+    100% { opacity: 1; transform: perspective(700px) rotateY(0deg) scale(1); }
+  }
+  .insert-head .reset-placed {
+    background: none;
+    border: 1px solid var(--panel-edge);
+    color: var(--ink-dim);
+    border-radius: 6px;
+    height: 26px;
+    padding: 0 9px;
+    margin-left: auto;
+    margin-right: 8px;
+    cursor: pointer;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  .insert-head .reset-placed:hover { color: var(--ink); border-color: var(--gold-soft); }
+
   /* effets "devant les personnages" (masqués quand un insert est ouvert) */
   #effects-front-layer { position: absolute; inset: 0; pointer-events: none; z-index: 13; }
   /* un effet "en boucle" ne se clique pas en jeu : il ne doit jamais bloquer ce qui est dessous */
@@ -1340,6 +1373,7 @@
         <div id="labels-layer"></div>
         <div id="npc-portrait-layer"></div>
         <div id="effects-front-layer"></div>
+        <div id="placed-layer"></div>
         <canvas id="weather-canvas"></canvas>
         <div id="weather-fog">
           <div class="fog-base"></div>
@@ -1519,7 +1553,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     sceneId: "bureau-francis",
     insertStack: [],         // liste d'ids empilés (cascade)
     soundOn: {},
-    effectsOn: {},            // id de zone effet -> bool (mode "au clic")             // id de zone -> bool (superpose)
+    effectsOn: {},            // id de zone effet -> bool (mode "au clic")
+    placedOn: {},             // id de zone image "posée" -> bool (visible)             // id de zone -> bool (superpose)
     selectedZoneId: null,
     audioEnabled: false
   };
@@ -1606,6 +1641,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     });
     state.soundOn = {};
     state.effectsOn = {};
+    state.placedOn = {};
   }
 
   function fsApiSupported() {
@@ -3274,6 +3310,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     renderBaseZones();
     renderInserts();
     renderEffects();
+    renderPlaced();
     renderNpcPortraits();
     renderNpcChecklist();
     renderBreadcrumb();
@@ -3321,6 +3358,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     poly.setAttribute("points", zone.points);
     poly.classList.add("zone-shape");
     if (zone.type === "effet" && zone.effectMode !== "toggle") poly.classList.add("fx-passive");
+    if (isPlacedZone(zone) && state.placedOn[zone.id]) poly.classList.add("placed-on");
     poly.dataset.zoneId = zone.id;
     if ((zone.type === "son" && zone.soundMode === "superpose" && state.soundOn[zone.id]) || (zone.type === "effet" && zone.effectMode === "toggle" && state.effectsOn[zone.id])) {
       poly.classList.add("sound-on");
@@ -3372,6 +3410,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
             poly.setAttribute("points", zone.points);
             poly.classList.add("zone-shape");
             if (zone.type === "effet" && zone.effectMode !== "toggle") poly.classList.add("fx-passive");
+            if (isPlacedZone(zone) && state.placedOn[zone.id]) poly.classList.add("placed-on");
             poly.dataset.zoneId = zone.id;
             if ((zone.type === "son" && zone.soundMode === "superpose" && state.soundOn[zone.id]) ||
                 (zone.type === "effet" && zone.effectMode === "toggle" && state.effectsOn[zone.id])) {
@@ -3491,6 +3530,23 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     zoneSvg.style.height = "100%";
     bodyWrap.appendChild(zoneSvg);
 
+    // images posées sur cette image (cartes, indices...) : au-dessus des zones,
+    // mais sans jamais bloquer leurs clics
+    const nestedZones = zone.insert.nested || [];
+    const placedLayer = document.createElement("div");
+    placedLayer.className = "insert-placed-layer";
+    fillPlacedLayer(placedLayer, nestedZones);
+    bodyWrap.appendChild(placedLayer);
+
+    if (state.mode === "mj" && nestedZones.some(isPlacedZone)) {
+      const resetBtn = document.createElement("button");
+      resetBtn.className = "reset-placed";
+      resetBtn.textContent = "↺ Tout masquer";
+      resetBtn.title = "Remettre toutes les images posées face cachée";
+      resetBtn.addEventListener("click", () => resetPlacedIn(nestedZones));
+      head.insertBefore(resetBtn, closeBtn);
+    }
+
     card.appendChild(head);
     card.appendChild(bodyWrap);
     return card;
@@ -3546,7 +3602,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       row("Type", typeLabel) +
       (zone.type === "son" ? row("Mode", zone.soundMode === "unique" ? "Bruitage unique" : "Superposé (on/off)") : "") +
       (zone.type === "son" ? row("Volume", (typeof zone.volume === "number" ? zone.volume : 100) + " %") : "") +
-      (zone.type === "image" ? row("Affichage", zone.insertMode === "ephemere" ? "Éphémère (" + (zone.insertDuration || 5) + " s)" : "Reste ouvert") : "") +
+      (zone.type === "image" ? row("Affichage", fxImageModeLabel(zone)) : "") +
       (zone.type === "effet" ? row("Effet", fxKindLabel(zone.effectKind)) + (fxHasIntensity(zone.effectKind) ? row(fxIntensityWord(zone.effectKind), Math.round(fireIntensity(zone) * 100) + " / 100") : "") + (zone.effectFront ? row("Position", "Devant les personnages") : "") + row("Activation", zone.effectMode === "toggle" ? "Au clic" : "En boucle") : "") +
       (zone.type === "scene" ? row("Cible", diskMode ? (loadedSceneNames[zone.target] || zone.target) : (SCENES[zone.target] ? SCENES[zone.target].name : zone.target)) : "");
   }
@@ -3778,6 +3834,18 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     }
     if (state.mode !== "mj") return;
 
+    if (isPlacedZone(zone)) {
+      if (!(zone.insert && zone.insert._url)) {
+        showToast("Aucune image associée à cette zone (mode Édition → « Associer une image »).", true);
+        return;
+      }
+      const on = !state.placedOn[zone.id];
+      state.placedOn = { ...state.placedOn, [zone.id]: on };
+      if (on) placedRevealAt[zone.id] = performance.now();
+      broadcastState();
+      render();
+      return;
+    }
     if (zone.type === "image" || zone.type === "personnage") {
       const openStack = parentStack.concat(zone.id);
       setInsertStack(openStack);
@@ -4784,14 +4852,31 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     }
   }
 
+  function fxImageModeLabel(zone) {
+    if (zone.insertMode === "ephemere") return "Éphémère (" + (zone.insertDuration || 5) + " s)";
+    if (zone.insertMode === "surplace") return "Posée sur la scène";
+    return "Reste ouvert";
+  }
+
   function imageModeEditHtml(zone) {
     if (zone.type !== "image") return "";
     const mode = zone.insertMode || "perma";
+    const tilt = typeof zone.placedRotation === "number" ? zone.placedRotation : 0;
     return '<label class="zi-label">Affichage</label>' +
       '<select id="zi-img-mode">' + fxOpt("perma", "Reste ouvert (recherche, image dans image)", mode) +
-      fxOpt("ephemere", "Éphémère (disparaît tout seul)", mode) + '</select>' +
+      fxOpt("ephemere", "Éphémère (disparaît tout seul)", mode) +
+      fxOpt("surplace", "Posée sur la scène (à la taille de la zone)", mode) + '</select>' +
       (mode === "ephemere"
         ? '<label class="zi-label">Durée (secondes)</label><input type="number" id="zi-img-duration" min="1" max="60" value="' + (zone.insertDuration || 5) + '">'
+        : "") +
+      (mode === "surplace"
+        ? '<label class="zi-label">Inclinaison : <span id="zi-img-tilt-val">' + tilt + '</span> °</label>' +
+          '<input type="range" id="zi-img-tilt" class="weather-slider" min="-25" max="25" step="1" value="' + tilt + '">' +
+          '<label class="zi-label">Ajustement à la zone</label>' +
+          '<select id="zi-img-fit">' + fxOpt("contain", "Image entière (proportions gardées)", zone.placedFit || "contain") +
+            fxOpt("cover", "Remplir la zone (rogne si besoin)", zone.placedFit || "contain") + '</select>' +
+          '<label class="zi-check"><input type="checkbox" id="zi-img-clip"' + (zone.placedClip ? " checked" : "") + '> Découper selon la forme de la zone</label>' +
+          '<div class="zi-hint">L\'image apparaît dans la zone au clic, sans cadre. Clique encore pour la masquer.</div>'
         : "");
   }
 
@@ -4801,7 +4886,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       zone.insertMode = e.target.value;
       if (zone.insertMode === "ephemere" && !zone.insertDuration) zone.insertDuration = 5;
       if (diskMode) saveSceneToDisk();
-      renderZoneInfo();
+      render();
     });
     const dur = zoneInfoEl.querySelector("#zi-img-duration");
     if (dur) {
@@ -4811,6 +4896,105 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         if (diskMode) saveSceneToDisk();
       });
     }
+    const fitSel = zoneInfoEl.querySelector("#zi-img-fit");
+    if (fitSel) {
+      fitSel.addEventListener("change", () => {
+        zone.placedFit = fitSel.value;
+        if (diskMode) saveSceneToDisk();
+        renderPlaced();
+        renderInserts();
+      });
+    }
+    const clipCb = zoneInfoEl.querySelector("#zi-img-clip");
+    if (clipCb) {
+      clipCb.addEventListener("change", () => {
+        zone.placedClip = clipCb.checked;
+        if (diskMode) saveSceneToDisk();
+        renderPlaced();
+        renderInserts();
+      });
+    }
+    const tilt = zoneInfoEl.querySelector("#zi-img-tilt");
+    if (tilt) {
+      let saveTimer = null;
+      tilt.addEventListener("input", () => {
+        zone.placedRotation = parseInt(tilt.value, 10) || 0;
+        zoneInfoEl.querySelector("#zi-img-tilt-val").textContent = zone.placedRotation;
+        renderPlaced();
+        renderInserts();
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => { if (diskMode) saveSceneToDisk(); }, 400);
+      });
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // Images "posées" : une zone image en mode "Posée sur la scène" ne s'ouvre pas
+  // en grande fenêtre. Au clic, son image apparaît directement à la place et à
+  // la taille de la zone, sans cadre ; plusieurs peuvent être visibles en même
+  // temps (cartes de tarot, indices épinglés sur un tableau...).
+  // ---------------------------------------------------------------
+
+  const PLACED_REVEAL_MS = 450;
+  const placedRevealAt = {};
+
+  function isPlacedZone(z) { return z.type === "image" && z.insertMode === "surplace"; }
+
+  function createPlacedElement(zone) {
+    const url = zone.insert && zone.insert._url;
+    if (!url) return null;
+    if (state.mode !== "edit" && !state.placedOn[zone.id]) return null;
+    const b = zoneBBox(zone.points);
+    const el = document.createElement("div");
+    el.className = "placed-img" + (state.mode === "edit" ? " preview" : "") + (zone.placedClip ? " clipped" : "");
+    el.style.left = (b.minX / 768 * 100) + "%";
+    el.style.top = (b.minY / 512 * 100) + "%";
+    el.style.width = ((b.maxX - b.minX) / 768 * 100) + "%";
+    el.style.height = ((b.maxY - b.minY) / 512 * 100) + "%";
+    if (typeof zone.placedRotation === "number" && zone.placedRotation) el.style.transform = "rotate(" + zone.placedRotation + "deg)";
+    const img = document.createElement("img");
+    img.src = url;
+    img.draggable = false;
+    img.style.objectFit = zone.placedFit === "cover" ? "cover" : "contain";
+    if (zone.placedClip) {
+      // découpe l'image selon la forme exacte de la zone (triangle, polygone...)
+      const bw = (b.maxX - b.minX) || 1, bh = (b.maxY - b.minY) || 1;
+      const pts = zone.points.trim().split(/\s+/).map(q => q.split(",").map(Number));
+      el.style.clipPath = "polygon(" + pts.map(q => (((q[0] - b.minX) / bw) * 100).toFixed(2) + "% " + (((q[1] - b.minY) / bh) * 100).toFixed(2) + "%").join(",") + ")";
+    }
+    // l'animation de retournement ne se joue qu'à l'apparition (les affichages se
+    // reconstruisent souvent : on la reprend à la bonne phase, sans la rejouer)
+    const age = performance.now() - (placedRevealAt[zone.id] || 0);
+    if (state.mode !== "edit" && age < PLACED_REVEAL_MS) {
+      img.className = "reveal";
+      img.style.animationDelay = (-age) + "ms";
+    }
+    el.appendChild(img);
+    return el;
+  }
+
+  function fillPlacedLayer(layer, zones) {
+    zones.forEach(z => {
+      if (!isPlacedZone(z)) return;
+      const el = createPlacedElement(z);
+      if (el) layer.appendChild(el);
+    });
+  }
+
+  function renderPlaced() {
+    const layer = document.getElementById("placed-layer");
+    if (!layer) return;
+    layer.innerHTML = "";
+    layer.style.display = state.insertStack.length > 0 ? "none" : "";
+    fillPlacedLayer(layer, ZONES);
+  }
+
+  function resetPlacedIn(zones) {
+    const next = { ...state.placedOn };
+    zones.forEach(z => { if (isPlacedZone(z)) delete next[z.id]; });
+    state.placedOn = next;
+    broadcastState();
+    render();
   }
 
   // ---------------------------------------------------------------
@@ -5106,7 +5290,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         '</select>' +
         '<div id="zf-img-wrap">' +
           '<label>Affichage</label>' +
-          '<select id="zf-img-mode"><option value="perma">Reste ouvert (recherche, image dans image)</option><option value="ephemere">Éphémère (disparaît tout seul)</option></select>' +
+          '<select id="zf-img-mode"><option value="perma">Reste ouvert (recherche, image dans image)</option><option value="ephemere">Éphémère (disparaît tout seul)</option><option value="surplace">Posée sur la scène (à la taille de la zone)</option></select>' +
           '<div id="zf-img-duration-wrap" style="display:none"><label>Durée (secondes)</label><input type="number" id="zf-img-duration" min="1" max="60" value="5"></div>' +
         '</div>' +
         '<div id="zf-son-mode-wrap">' +
@@ -5278,6 +5462,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       insertStack: state.insertStack,
       soundOn: state.soundOn,
       effectsOn: state.effectsOn,
+      placedOn: state.placedOn,
       activeNpcOrder: activeNpcOrder,
       speakingNpc: speakingNpc,
       npcEmotes: Object.fromEntries(Object.entries(npcEmotes).map(([k, v]) => [k, { emoji: v.emoji, expiresAt: v.expiresAt }])),
@@ -5314,6 +5499,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         state.insertStack = msg.insertStack;
         state.soundOn = msg.soundOn;
         state.effectsOn = msg.effectsOn || {};
+        const nextPlaced = msg.placedOn || {};
+        Object.keys(nextPlaced).forEach(id => { if (nextPlaced[id] && !state.placedOn[id]) placedRevealAt[id] = performance.now(); });
+        state.placedOn = nextPlaced;
         activeNpcOrder = msg.activeNpcOrder || [];
         speakingNpc = msg.speakingNpc || null;
         applyRemoteNpcEmotes(msg.npcEmotes || {});
