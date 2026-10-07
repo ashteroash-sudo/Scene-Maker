@@ -557,6 +557,13 @@
   /* une image posée déjà retournée cache son contour en MJ (il réapparaît au survol, pour la remasquer) */
   body.mode-mj .zone-shape.placed-on:not(:hover) { stroke: transparent; }
   .placed-img.preview { opacity: 0.6; }
+  /* "Épouser la zone" : l'image est déformée en perspective sur les 4 coins de la zone.
+     Le conteneur fait 768x512 unités (comme le dessin des zones) et suit la taille de l'écran. */
+  .placed-warp { position: absolute; left: 0; top: 0; width: 768px; height: 512px; transform-origin: 0 0; pointer-events: none; }
+  .placed-warp.preview { opacity: 0.6; }
+  .placed-warp img { position: absolute; left: 0; top: 0; max-width: none; transform-origin: 0 0; display: block; }
+  .placed-warp.reveal { animation: placed-fade 0.4s ease-out both; }
+  @keyframes placed-fade { 0% { opacity: 0; } 100% { opacity: 1; } }
   .placed-img.clipped img { filter: none; }
   .placed-img img.reveal { animation: placed-in 0.45s ease-out both; }
   @keyframes placed-in {
@@ -4869,7 +4876,15 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       (mode === "ephemere"
         ? '<label class="zi-label">Durée (secondes)</label><input type="number" id="zi-img-duration" min="1" max="60" value="' + (zone.insertDuration || 5) + '">'
         : "") +
-      (mode === "surplace"
+      (mode === "surplace" && canWarpZone(zone)
+        ? '<label class="zi-check"><input type="checkbox" id="zi-img-warp"' + (zone.placedWarp ? " checked" : "") + '> Épouser la zone (perspective, 4 coins)</label>' +
+          (zone.placedWarp
+            ? '<label class="zi-label">Orientation de l\'image</label>' +
+              '<select id="zi-img-turn">' + [0, 1, 2, 3].map(n => fxOpt(String(n), n * 90 + " °", String(zone.placedTurn || 0))).join("") + '</select>' +
+              '<div class="zi-hint">Les 4 coins de l\'image se posent sur les 4 coins de la zone. Si l\'image est à l\'envers, change l\'orientation.</div>'
+            : "")
+        : "") +
+      (mode === "surplace" && !isWarpZone(zone)
         ? '<label class="zi-label">Inclinaison : <span id="zi-img-tilt-val">' + tilt + '</span> °</label>' +
           '<input type="range" id="zi-img-tilt" class="weather-slider" min="-25" max="25" step="1" value="' + tilt + '">' +
           '<label class="zi-label">Ajustement à la zone</label>' +
@@ -4877,6 +4892,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
             fxOpt("cover", "Remplir la zone (rogne si besoin)", zone.placedFit || "contain") + '</select>' +
           '<label class="zi-check"><input type="checkbox" id="zi-img-clip"' + (zone.placedClip ? " checked" : "") + '> Découper selon la forme de la zone</label>' +
           '<div class="zi-hint">L\'image apparaît dans la zone au clic, sans cadre. Clique encore pour la masquer.</div>'
+        : "") +
+      (mode === "surplace" && !canWarpZone(zone)
+        ? '<div class="zi-hint">« Épouser la zone » (perspective) n\'est proposé que pour une zone à 4 coins formant un quadrilatère convexe.</div>'
         : "");
   }
 
@@ -4894,6 +4912,24 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         zone.insertDuration = Math.max(1, Math.min(60, parseInt(dur.value, 10) || 5));
         dur.value = zone.insertDuration;
         if (diskMode) saveSceneToDisk();
+      });
+    }
+    const warpCb = zoneInfoEl.querySelector("#zi-img-warp");
+    if (warpCb) {
+      warpCb.addEventListener("change", () => {
+        zone.placedWarp = warpCb.checked;
+        if (diskMode) saveSceneToDisk();
+        render();
+        renderZoneInfo();
+      });
+    }
+    const turnSel = zoneInfoEl.querySelector("#zi-img-turn");
+    if (turnSel) {
+      turnSel.addEventListener("change", () => {
+        zone.placedTurn = parseInt(turnSel.value, 10) || 0;
+        if (diskMode) saveSceneToDisk();
+        renderPlaced();
+        renderInserts();
       });
     }
     const fitSel = zoneInfoEl.querySelector("#zi-img-fit");
@@ -4940,10 +4976,95 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   function isPlacedZone(z) { return z.type === "image" && z.insertMode === "surplace"; }
 
+  // ----- "Épouser la zone" : déformation en perspective sur un quadrilatère -----
+
+  // Renvoie les 4 coins dans l'ordre [haut-gauche, haut-droite, bas-droite, bas-gauche]
+  // (sens horaire), décalés de "turn" quarts de tour ; null si la zone n'est pas un
+  // quadrilatère convexe.
+  function orderedQuad(pointsStr, turn) {
+    const pts = pointsStr.trim().split(/\s+/).map(q => q.split(",").map(Number));
+    if (pts.length !== 4 || pts.some(q => q.length < 2 || !isFinite(q[0]) || !isFinite(q[1]))) return null;
+    const cx = pts.reduce((a, q) => a + q[0], 0) / 4, cy = pts.reduce((a, q) => a + q[1], 0) / 4;
+    pts.sort((a, b) => Math.atan2(a[1] - cy, a[0] - cx) - Math.atan2(b[1] - cy, b[0] - cx)); // sens horaire à l'écran
+    let sign = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = pts[i], b = pts[(i + 1) % 4], c = pts[(i + 2) % 4];
+      const cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+      if (Math.abs(cr) < 1e-6) return null;
+      if (sign === 0) sign = cr > 0 ? 1 : -1; else if ((cr > 0 ? 1 : -1) !== sign) return null; // coin rentrant
+    }
+    let tl = 0;
+    for (let i = 1; i < 4; i++) if (pts[i][0] + pts[i][1] < pts[tl][0] + pts[tl][1]) tl = i;
+    const k = ((tl + (turn || 0)) % 4 + 4) % 4;
+    return [pts[k], pts[(k + 1) % 4], pts[(k + 2) % 4], pts[(k + 3) % 4]];
+  }
+
+  function canWarpZone(zone) { return !!orderedQuad(zone.points, 0); }
+  function isWarpZone(zone) { return !!zone.placedWarp && canWarpZone(zone); }
+
+  // matrix3d CSS qui envoie le rectangle (0,0)-(w,h) sur le quadrilatère q (4 coins)
+  function warpMatrix3d(q, w, h) {
+    const x0 = q[0][0], y0 = q[0][1], x1 = q[1][0], y1 = q[1][1], x2 = q[2][0], y2 = q[2][1], x3 = q[3][0], y3 = q[3][1];
+    const dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+    const dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+    let a, b, c, d, e, f, g, hh;
+    if (Math.abs(dx3) < 1e-9 && Math.abs(dy3) < 1e-9) {
+      a = x1 - x0; b = x3 - x0; c = x0; d = y1 - y0; e = y3 - y0; f = y0; g = 0; hh = 0;
+    } else {
+      const det = dx1 * dy2 - dx2 * dy1;
+      g = (dx3 * dy2 - dx2 * dy3) / det;
+      hh = (dx1 * dy3 - dx3 * dy1) / det;
+      a = x1 - x0 + g * x1; b = x3 - x0 + hh * x3; c = x0;
+      d = y1 - y0 + g * y1; e = y3 - y0 + hh * y3; f = y0;
+    }
+    // carré unité -> quad ; on compose avec la mise à l'échelle px image -> carré unité
+    const m = [a / w, d / w, 0, g / w, b / h, e / h, 0, hh / h, 0, 0, 1, 0, c, f, 0, 1];
+    return "matrix3d(" + m.join(",") + ")";
+  }
+
+  // le conteneur 768x512 suit la taille réelle de son calque (même étirement que les zones)
+  const warpObserver = (typeof ResizeObserver !== "undefined") ? new ResizeObserver(entries => {
+    entries.forEach(en => syncWarpScale(en.target));
+  }) : null;
+  function syncWarpScale(layer) {
+    const w = layer.clientWidth, h = layer.clientHeight;
+    if (!w || !h) return;
+    layer.querySelectorAll(":scope > .placed-warp").forEach(el => {
+      el.style.transform = "scale(" + (w / 768) + "," + (h / 512) + ")";
+    });
+  }
+
+  function createWarpElement(zone, url) {
+    const q = orderedQuad(zone.points, zone.placedTurn || 0);
+    const el = document.createElement("div");
+    el.className = "placed-warp" + (state.mode === "edit" ? " preview" : "");
+    const img = document.createElement("img");
+    img.draggable = false;
+    img.style.visibility = "hidden";
+    const place = () => {
+      const w = img.naturalWidth || 1, h = img.naturalHeight || 1;
+      img.style.width = w + "px";
+      img.style.height = h + "px";
+      img.style.transform = warpMatrix3d(q, w, h);
+      img.style.visibility = "";
+    };
+    img.onload = place;
+    img.src = url;
+    if (img.complete && img.naturalWidth) place();
+    const age = performance.now() - (placedRevealAt[zone.id] || 0);
+    if (state.mode !== "edit" && age < PLACED_REVEAL_MS) {
+      el.classList.add("reveal");
+      el.style.animationDelay = (-age) + "ms";
+    }
+    el.appendChild(img);
+    return el;
+  }
+
   function createPlacedElement(zone) {
     const url = zone.insert && zone.insert._url;
     if (!url) return null;
     if (state.mode !== "edit" && !state.placedOn[zone.id]) return null;
+    if (isWarpZone(zone)) return createWarpElement(zone, url);
     const b = zoneBBox(zone.points);
     const el = document.createElement("div");
     el.className = "placed-img" + (state.mode === "edit" ? " preview" : "") + (zone.placedClip ? " clipped" : "");
@@ -4977,7 +5098,12 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     zones.forEach(z => {
       if (!isPlacedZone(z)) return;
       const el = createPlacedElement(z);
-      if (el) layer.appendChild(el);
+      if (!el) return;
+      layer.appendChild(el);
+      if (el.classList.contains("placed-warp")) {
+        syncWarpScale(layer);
+        if (warpObserver) warpObserver.observe(layer);
+      }
     });
   }
 
