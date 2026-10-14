@@ -546,6 +546,47 @@
   #zone-clipboard-bar { padding: 0 14px 10px; }
   .zi-hint { font-size: 0.7rem; color: var(--ink-dim); margin: -2px 0 8px; }
 
+  /* ---------- Horloge de scénario ---------- */
+  #clock-panel { margin: 0 14px 6px; }
+  .clock-day { font-size: 0.72rem; color: var(--ink-dim); text-transform: uppercase; letter-spacing: 0.08em; text-align: center; margin-bottom: 2px; }
+  .clock-row { display: flex; align-items: center; gap: 6px; }
+  .clock-time {
+    flex: 1; min-width: 0; background: var(--bg-void); border: 1px solid var(--gold-soft); border-radius: 8px;
+    color: var(--gold); font-size: 2rem; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.05em;
+    padding: 4px 0; cursor: pointer;
+  }
+  .clock-time:hover { border-color: var(--gold); }
+  .clock-plus { display: flex; gap: 4px; }
+  .clock-btn {
+    background: var(--bg-void); border: 1px solid var(--panel-edge); color: var(--ink); border-radius: 6px;
+    padding: 6px 7px; font-size: 0.8rem; cursor: pointer; font-variant-numeric: tabular-nums;
+  }
+  .clock-btn:hover { border-color: var(--gold-soft); color: var(--gold); }
+  #clock-set { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-top: 8px; font-size: 0.75rem; color: var(--ink-dim); }
+  #clock-set label { display: flex; flex-direction: column; gap: 2px; }
+  #clock-set input { width: 90px; background: var(--bg-void); border: 1px solid var(--panel-edge); color: var(--ink); border-radius: 6px; padding: 4px 6px; }
+  #clock-set-day { width: 56px !important; }
+  #clock-scene-row { margin-top: 10px; font-size: 0.75rem; color: var(--ink-dim); }
+  #clock-scene-row label { display: block; margin-bottom: 4px; }
+  .clock-adv-wrap { display: inline-flex; align-items: center; gap: 6px; }
+  #clock-scene-adv { width: 80px; background: var(--bg-void); border: 1px solid var(--panel-edge); color: var(--ink); border-radius: 6px; padding: 4px 6px; }
+
+  /* affichage côté Joueur (rétroprojecteur) : gros, très contrasté, lisible de loin */
+  #clock-display {
+    display: none; position: absolute; top: 1.6vmin; right: 1.8vmin; z-index: 45;
+    align-items: baseline; gap: 1.6vmin; padding: 0.4vmin 1.4vmin 0.5vmin;
+    background: rgba(4, 7, 10, 0.72); border: 0.25vmin solid rgba(214, 180, 100, 0.85); border-radius: 1.2vmin;
+    color: #fbf1cf; font-size: max(1.8rem, 4.6vmin); line-height: 1.05; font-weight: 700;
+    font-variant-numeric: tabular-nums; letter-spacing: 0.05em;
+    text-shadow: 0 0 1.8vmin rgba(214, 180, 100, 0.55), 0 0.3vmin 0.6vmin #000;
+    box-shadow: 0 0 3vmin rgba(0, 0, 0, 0.7);
+    pointer-events: none; transition: border-color 0.3s, box-shadow 0.3s;
+  }
+  body.mode-player #clock-display { display: flex; }
+  #clock-display.advancing { border-color: #ffe39a; box-shadow: 0 0 4vmin rgba(255, 220, 140, 0.45), 0 0 3vmin rgba(0, 0, 0, 0.7); }
+  #clock-display-delta { font-size: 0.4em; color: #e8c86e; letter-spacing: 0.02em; opacity: 0; transition: opacity 0.3s; white-space: nowrap; }
+  #clock-display.advancing #clock-display-delta { opacity: 1; }
+
   /* images "posées" : l'image s'affiche à la place et à la taille de la zone, sans cadre */
   #placed-layer { position: absolute; inset: 0; pointer-events: none; z-index: 14; }
   .insert-placed-layer { position: absolute; inset: 0; pointer-events: none; }
@@ -1381,6 +1422,7 @@
         <div id="npc-portrait-layer"></div>
         <div id="effects-front-layer"></div>
         <div id="placed-layer"></div>
+        <div id="clock-display" aria-live="off"><span id="clock-display-time">21:00</span><span id="clock-display-delta"></span></div>
         <canvas id="weather-canvas"></canvas>
         <div id="weather-fog">
           <div class="fog-base"></div>
@@ -1397,6 +1439,29 @@
       <div id="scenes-mosaic" class="scenes-mosaic hidden"></div>
     </div>
     <div id="side-panel">
+      <h3>Horloge</h3>
+      <div id="clock-panel">
+        <div class="clock-day" id="clock-day">Jour 1</div>
+        <div class="clock-row">
+          <button class="clock-btn" data-min="-10" title="Reculer de 10 minutes">−10</button>
+          <button id="clock-time" class="clock-time" title="Clique pour régler l'heure">21:00</button>
+          <div class="clock-plus">
+            <button class="clock-btn" data-min="10" title="Avancer de 10 minutes">+10</button>
+            <button class="clock-btn" data-min="30" title="Avancer de 30 minutes">+30</button>
+            <button class="clock-btn" data-min="60" title="Avancer d'une heure">+60</button>
+          </div>
+        </div>
+        <div id="clock-set" style="display:none;">
+          <label>Jour <input type="number" id="clock-set-day" min="1" step="1"></label>
+          <label>Heure <input type="time" id="clock-set-time"></label>
+          <button id="clock-set-ok" class="clock-btn">OK</button>
+        </div>
+        <div id="clock-scene-row" style="display:none;">
+          <label for="clock-scene-adv">Temps écoulé en arrivant sur cette scène</label>
+          <span class="clock-adv-wrap"><input type="number" id="clock-scene-adv" min="0" step="1" placeholder="0"> min</span>
+        </div>
+      </div>
+
       <h3>Zone sélectionnée</h3>
       <div id="zone-info" class="zone-info-box"><span class="empty">Clique une zone pour voir ses réglages.</span></div>
       <div id="zone-clipboard-bar" style="display:none;"></div>
@@ -1689,6 +1754,142 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     return JSON.parse(JSON.stringify(list, (key, val) => (key && key.indexOf("_") === 0) ? undefined : val));
   }
 
+  // ---------------------------------------------------------------
+  // Horloge de scénario : avance avec les scènes (champ libre par scène) et
+  // avec des boutons rapides ; visible en grand côté Joueur ; sauvegardée
+  // dans le dossier scénario (horloge.json).
+  // ---------------------------------------------------------------
+
+  const CLOCK_DEFAULT = 1260;      // Jour 1, 21:00 (minutes écoulées depuis le Jour 1 à 00:00)
+  let clockTotal = CLOCK_DEFAULT;  // valeur de référence (MJ)
+  let clockShown = null;           // valeur affichée côté Joueur (change pendant l'animation)
+  let clockTarget = null;
+  let clockAnimFrame = null;
+  let clockOrigin = null;          // heure affichée au début d'une série de changements rapprochés
+  let clockSynced = false;
+  let sceneClockAdvance = 0;
+
+  const clockDayEl = document.getElementById("clock-day");
+  const clockTimeBtn = document.getElementById("clock-time");
+  const clockSetBox = document.getElementById("clock-set");
+  const clockSetDay = document.getElementById("clock-set-day");
+  const clockSetTime = document.getElementById("clock-set-time");
+  const clockSceneRow = document.getElementById("clock-scene-row");
+  const clockSceneAdv = document.getElementById("clock-scene-adv");
+  const clockDisplayEl = document.getElementById("clock-display");
+  const clockDisplayTime = document.getElementById("clock-display-time");
+  const clockDisplayDelta = document.getElementById("clock-display-delta");
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function fmtClock(total) {
+    const m = ((Math.round(total) % 1440) + 1440) % 1440;
+    return pad2(Math.floor(m / 60)) + ":" + pad2(m % 60);
+  }
+  function clockDayNum(total) { return Math.floor(total / 1440) + 1; }
+
+  function renderClockPanel() {
+    clockDayEl.textContent = "Jour " + clockDayNum(clockTotal);
+    clockTimeBtn.textContent = fmtClock(clockTotal);
+    clockSceneRow.style.display = (diskMode && currentSceneName) ? "block" : "none";
+    if (document.activeElement !== clockSceneAdv) clockSceneAdv.value = sceneClockAdvance > 0 ? sceneClockAdvance : "";
+  }
+
+  async function saveClock() {
+    if (!rootDirHandle || state.mode === "player") return;
+    try { await writeJsonIntoDir(rootDirHandle, "horloge.json", { total: clockTotal }); } catch (e) {}
+  }
+
+  async function loadClock() {
+    clockTotal = CLOCK_DEFAULT;
+    if (rootDirHandle) {
+      try {
+        const fh = await rootDirHandle.getFileHandle("horloge.json");
+        const d = JSON.parse(await (await fh.getFile()).text());
+        if (typeof d.total === "number" && isFinite(d.total) && d.total >= 0) clockTotal = Math.round(d.total);
+      } catch (e) {}
+    }
+    renderClockPanel();
+    if (!clockSynced) { clockShown = clockTarget = clockTotal; paintClockDisplay(clockTotal); }
+  }
+
+  // change l'heure (delta en minutes, ou valeur absolue) puis sauvegarde et prévient la vue Joueur
+  function clockChange(newTotal, opts) {
+    opts = opts || {};
+    const before = clockTotal;
+    clockTotal = Math.max(0, Math.round(newTotal));
+    renderClockPanel();
+    saveClock();
+    if (opts.broadcast !== false) broadcastState();
+    if (opts.toast && clockTotal !== before) {
+      const d = clockTotal - before;
+      showToast("🕒 " + (d > 0 ? "+" : "−") + Math.abs(d) + " min — " + fmtClock(clockTotal));
+    }
+  }
+
+  function paintClockDisplay(total) { clockDisplayTime.textContent = fmtClock(total); }
+
+  // côté Joueur : les chiffres défilent jusqu'à la nouvelle heure, pour que le temps qui passe se voie
+  function applyRemoteClock(total) {
+    if (typeof total !== "number" || !isFinite(total)) return;
+    const target = Math.round(total);
+    if (!clockSynced || clockShown === null) {
+      clockSynced = true;
+      clockShown = clockTarget = target;
+      paintClockDisplay(target);
+      return;
+    }
+    if (target === clockTarget) return;
+    clockTarget = target;
+    const from = clockShown, delta = target - from;
+    const dur = Math.max(900, Math.min(2600, 900 + Math.abs(delta) * 18));
+    const t0 = performance.now();
+    cancelAnimationFrame(clockAnimFrame);
+    clockDisplayEl.classList.add("advancing");
+    if (clockOrigin === null) clockOrigin = from;
+    const absD = Math.abs(Math.round(target - clockOrigin));
+    const sign = target - clockOrigin;
+    clockDisplayDelta.textContent = (sign >= 0 ? "+" : "−") + (absD >= 120 ? Math.floor(absD / 60) + " h" + (absD % 60 ? " " + pad2(absD % 60) : "") : absD + " min");
+    const ease = (x) => x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+    const step = (now) => {
+      const x = Math.min(1, (now - t0) / dur);
+      clockShown = from + delta * ease(x);
+      paintClockDisplay(clockShown);
+      if (x < 1) {
+        clockAnimFrame = requestAnimationFrame(step);
+      } else {
+        clockShown = target;
+        clockOrigin = null;
+        paintClockDisplay(target);
+        setTimeout(() => { if (clockTarget === target) clockDisplayEl.classList.remove("advancing"); }, 1400);
+      }
+    };
+    clockAnimFrame = requestAnimationFrame(step);
+  }
+
+  document.querySelectorAll("#clock-panel .clock-btn[data-min]").forEach(btn => {
+    btn.addEventListener("click", () => clockChange(clockTotal + parseInt(btn.dataset.min, 10), { toast: true }));
+  });
+  clockTimeBtn.addEventListener("click", () => {
+    const open = clockSetBox.style.display === "none";
+    clockSetBox.style.display = open ? "flex" : "none";
+    if (open) {
+      clockSetDay.value = clockDayNum(clockTotal);
+      clockSetTime.value = fmtClock(clockTotal);
+    }
+  });
+  document.getElementById("clock-set-ok").addEventListener("click", () => {
+    const day = Math.max(1, parseInt(clockSetDay.value, 10) || 1);
+    const parts = (clockSetTime.value || "00:00").split(":");
+    const mins = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
+    clockSetBox.style.display = "none";
+    clockChange((day - 1) * 1440 + mins);
+  });
+  clockSceneAdv.addEventListener("change", () => {
+    sceneClockAdvance = Math.max(0, Math.round(Number(clockSceneAdv.value) || 0));
+    clockSceneAdv.value = sceneClockAdvance > 0 ? sceneClockAdvance : "";
+    saveSceneToDisk();
+  });
+
   async function saveSceneToDisk() {
     if (!diskMode || !currentSceneDirHandle) return;
     try {
@@ -1705,7 +1906,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         tensionVignette: tensionVignette,
         rainIntensity: rainIntensity,
         snowIntensity: snowIntensity,
-        musicVolume: musicVolume
+        musicVolume: musicVolume,
+        clockAdvance: sceneClockAdvance
       };
       await writeJsonIntoDir(currentSceneDirHandle, "scene.json", sceneData);
     } catch (e) {
@@ -2724,6 +2926,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   }
 
   async function loadSceneFromDisk(folderName) {
+    const previousSceneName = currentSceneName;
     let sceneDir;
     try {
       sceneDir = await rootDirHandle.getDirectoryHandle(folderName);
@@ -2813,6 +3016,15 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     musicVolumeInput.value = musicVolume;
     musicAudioEl.volume = musicVolume / 100;
     renderWeather();
+
+    // horloge : le temps de la scène s'ajoute une fois, en arrivant depuis une autre scène,
+    // côté MJ seulement (jamais en Édition, ni côté Joueur qui reçoit l'heure du MJ)
+    sceneClockAdvance = Math.max(0, Math.round(Number(sceneData.clockAdvance) || 0));
+    if (state.mode === "mj" && previousSceneName && previousSceneName !== folderName && sceneClockAdvance > 0) {
+      clockChange(clockTotal + sceneClockAdvance, { broadcast: false, toast: true });
+    } else {
+      renderClockPanel();
+    }
 
     state.sceneId = folderName;
     state.insertStack = [];
@@ -3134,6 +3346,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       broadcastState();
       render();
       loadScenarioDocConfig();
+      loadClock();
     } catch (e) {
       // sélection annulée par l'utilisateur
     }
@@ -5599,7 +5812,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       tensionVignette: tensionVignette,
       rainIntensity: rainIntensity,
       snowIntensity: snowIntensity,
-      musicVolume: musicVolume
+      musicVolume: musicVolume,
+      clock: clockTotal
     });
   }
   function requestStateFromPeers() {
@@ -5665,6 +5879,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         }
         render();
         hydrateActiveNpcImages();
+        applyRemoteClock(msg.clock);
       } else if (msg.type === "effect") {
         if (msg.effect === "shake") playShake();
         else if (msg.effect === "zoom") playZoom();
@@ -5883,6 +6098,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     state.mode = "player";
     render();
     loadScenarioDocConfig();
+      loadClock();
     requestStateFromPeers();
 
     try {
@@ -5921,6 +6137,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     if (!ok) {
       render();
       loadScenarioDocConfig();
+      loadClock();
     }
   })();
 })();
