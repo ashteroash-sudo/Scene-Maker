@@ -1457,6 +1457,7 @@
           <label>Heure <input type="time" id="clock-set-time"></label>
           <button id="clock-set-ok" class="clock-btn">OK</button>
         </div>
+        <button id="clock-reset" class="clock-btn" style="margin-top:8px;" title="Remet l'heure à Jour 1, 21:00 et oublie les scènes déjà comptées">Nouvelle partie</button>
         <div id="clock-scene-row" style="display:none;">
           <label for="clock-scene-adv">Temps écoulé en arrivant sur cette scène</label>
           <span class="clock-adv-wrap"><input type="number" id="clock-scene-adv" min="0" step="1" placeholder="0"> min</span>
@@ -1769,6 +1770,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
   let clockOrigin = null;          // heure affichée au début d'une série de changements rapprochés
   let clockSynced = false;
   let sceneClockAdvance = 0;
+  let clockDone = new Set();       // scènes dont le temps a déjà été ajouté (une seule fois par scène)
 
   const clockDayEl = document.getElementById("clock-day");
   const clockTimeBtn = document.getElementById("clock-time");
@@ -1797,20 +1799,38 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   async function saveClock() {
     if (!rootDirHandle || state.mode === "player") return;
-    try { await writeJsonIntoDir(rootDirHandle, "horloge.json", { total: clockTotal }); } catch (e) {}
+    try { await writeJsonIntoDir(rootDirHandle, "horloge.json", { total: clockTotal, done: Array.from(clockDone) }); } catch (e) {}
   }
 
   async function loadClock() {
     clockTotal = CLOCK_DEFAULT;
+    clockDone = new Set();
     if (rootDirHandle) {
       try {
         const fh = await rootDirHandle.getFileHandle("horloge.json");
         const d = JSON.parse(await (await fh.getFile()).text());
         if (typeof d.total === "number" && isFinite(d.total) && d.total >= 0) clockTotal = Math.round(d.total);
+        if (Array.isArray(d.done)) clockDone = new Set(d.done.filter(x => typeof x === "string"));
       } catch (e) {}
     }
     renderClockPanel();
     if (!clockSynced) { clockShown = clockTarget = clockTotal; paintClockDisplay(clockTotal); }
+  }
+
+  // temps de fouille d'une zone image : 5 à 10 min, déterminé par l'identité de la zone (même valeur à chaque
+  // ouverture du fichier, rien à programmer ni à stocker, valable aussi pour les zones déjà existantes)
+  function zoneSearchMinutes(zone) {
+    const str = (currentSceneName || state.sceneId || "") + "|" + zone.id;
+    let h = 2166136261;
+    for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+    h ^= h >>> 15; h = Math.imul(h, 2246822507) >>> 0; h ^= h >>> 13;
+    return 5 + (h >>> 0) % 6;
+  }
+  function clockAddZoneSearch(zone) {
+    const key = "zone:" + (currentSceneName || state.sceneId || "") + ":" + zone.id;
+    if (clockDone.has(key)) return;
+    clockDone.add(key);
+    clockChange(clockTotal + zoneSearchMinutes(zone), { toast: true });
   }
 
   // change l'heure (delta en minutes, ou valeur absolue) puis sauvegarde et prévient la vue Joueur
@@ -1884,6 +1904,11 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     const mins = (parseInt(parts[0], 10) || 0) * 60 + (parseInt(parts[1], 10) || 0);
     clockSetBox.style.display = "none";
     clockChange((day - 1) * 1440 + mins);
+  });
+  document.getElementById("clock-reset").addEventListener("click", () => {
+    if (!confirm("Remettre l'horloge à Jour 1, 21:00 et oublier les scènes déjà comptées ?")) return;
+    clockDone = new Set();
+    clockChange(CLOCK_DEFAULT, { toast: true });
   });
   clockSceneAdv.addEventListener("change", () => {
     sceneClockAdvance = Math.max(0, Math.round(Number(clockSceneAdv.value) || 0));
@@ -3021,8 +3046,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     // horloge : le temps de la scène s'ajoute une fois, en arrivant depuis une autre scène,
     // côté MJ seulement (jamais en Édition, ni côté Joueur qui reçoit l'heure du MJ)
     sceneClockAdvance = Math.max(0, Math.round(Number(sceneData.clockAdvance) || 0));
-    if (state.mode === "mj" && previousSceneName && previousSceneName !== folderName && sceneClockAdvance > 0) {
-      clockChange(clockTotal + sceneClockAdvance, { broadcast: false, toast: true });
+    if (state.mode === "mj" && previousSceneName && previousSceneName !== folderName && !clockDone.has(folderName)) {
+      clockDone.add(folderName);
+      if (sceneClockAdvance > 0) clockChange(clockTotal + sceneClockAdvance, { broadcast: false, toast: true });
+      else { renderClockPanel(); saveClock(); }
     } else {
       renderClockPanel();
     }
@@ -4067,6 +4094,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       render();
       return;
     }
+    if (zone.type === "image") clockAddZoneSearch(zone);
     if (zone.type === "image" || zone.type === "personnage") {
       const openStack = parentStack.concat(zone.id);
       setInsertStack(openStack);
