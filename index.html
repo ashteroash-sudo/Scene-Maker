@@ -5856,6 +5856,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (msg.type === "request-state" && state.mode !== "player") {
         broadcastState();
       } else if (msg.type === "state" && state.mode === "player") {
+        // l'heure est appliquée tout de suite, dans l'ordre d'arrivée des messages : le chargement d'une scène
+        // (await ci-dessous) laisse passer d'autres messages, et un message plus ancien finissait par écraser l'heure
+        applyRemoteClock(msg.clock);
         // si la scène a changé côté MJ, on va la charger nous-mêmes depuis
         // le disque (chaque onglet a sa propre lecture du dossier) avant
         // d'appliquer le reste de l'état — sinon le fond/les zones restent
@@ -5908,7 +5911,6 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         }
         render();
         hydrateActiveNpcImages();
-        applyRemoteClock(msg.clock);
       } else if (msg.type === "effect") {
         if (msg.effect === "shake") playShake();
         else if (msg.effect === "zoom") playZoom();
