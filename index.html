@@ -1817,14 +1817,14 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     if (!clockSynced) { clockShown = clockTarget = clockTotal; paintClockDisplay(clockTotal); }
   }
 
-  // temps de fouille d'une zone image : 5 à 10 min, déterminé par l'identité de la zone (même valeur à chaque
+  // temps de fouille d'une zone image : 2 à 8 min, déterminé par l'identité de la zone (même valeur à chaque
   // ouverture du fichier, rien à programmer ni à stocker, valable aussi pour les zones déjà existantes)
   function zoneSearchMinutes(zone) {
     const str = (currentSceneName || state.sceneId || "") + "|" + zone.id;
     let h = 2166136261;
     for (let i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
     h ^= h >>> 15; h = Math.imul(h, 2246822507) >>> 0; h ^= h >>> 13;
-    return 5 + (h >>> 0) % 6;
+    return 2 + (h >>> 0) % 7;
   }
   function clockAddZoneSearch(zone) {
     const key = "zone:" + (currentSceneName || state.sceneId || "") + ":" + zone.id;
