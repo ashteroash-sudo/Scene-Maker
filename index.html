@@ -725,7 +725,7 @@
   .npc-portrait { transform-origin: 50% 100%; }
   #npc-fx-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 15; }
   .npc-pop { position: absolute; font-family: Impact, "Arial Black", "Haettenschweiler", sans-serif; font-weight: 900; line-height: 1; white-space: nowrap; color: #ffe14a; paint-order: stroke fill; -webkit-text-stroke-color: #14110a; letter-spacing: 0.02em; }
-  .npc-fx-dust { position: absolute; border-radius: 50%; background: radial-gradient(circle at 40% 35%, rgba(238,228,208,0.95), rgba(176,166,150,0.7) 55%, rgba(150,140,125,0) 72%); }
+  .npc-fx-dust { position: absolute; border-radius: 50%; background: radial-gradient(circle at 45% 40%, rgba(214,196,164,0.9), rgba(170,150,120,0.55) 55%, rgba(150,130,105,0) 74%); filter: blur(1.5px); }
   #anim-bubble-row { display: block; margin: 0 0 8px; font-size: 0.8rem; color: var(--ink-dim); cursor: pointer; }
   /* tableau d'animations des personnages (MJ) */
   #npc-anim-board { display: none; margin: 8px 0 4px; padding: 8px; border: 1px solid var(--panel-edge); border-radius: 8px; background: rgba(0,0,0,0.18); }
@@ -2517,21 +2517,24 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     return a;
   }
 
-  function fxDust(g, delay, spread) {
-    const n = 8;
+  // poussière : petits nuages bas et doux, qui traînent derrière le personnage qui part (trail = sens du départ, 0 = sur place)
+  function fxDust(g, delay, spread, trail) {
+    const n = 9;
     for (let i = 0; i < n; i++) {
-      const size = g.cw * (0.32 + Math.random() * 0.2);
-      const x = g.cx + (Math.random() - 0.5) * g.cw * spread;
-      const y = g.H - size * 0.45 - Math.random() * g.ch * 0.05;
+      const size = g.cw * (0.16 + Math.random() * 0.14);
+      const back = trail ? -trail * Math.random() * g.cw * 1.0 : 0;
+      const x = g.cx + back + (Math.random() - 0.5) * g.cw * spread;
+      const y = g.H - size * 0.4 - Math.random() * g.ch * 0.025;
       const el = document.createElement("div");
       el.className = "npc-fx-dust";
       el.style.cssText = "left:" + (x - size / 2) + "px;top:" + (y - size / 2) + "px;width:" + size + "px;height:" + size + "px;";
-      const dx = (x - g.cx) * (0.5 + Math.random() * 0.6), dy = g.ch * (0.04 + Math.random() * 0.12);
+      const dx = (trail ? -trail * g.cw * (0.1 + Math.random() * 0.3) : (x - g.cx) * (0.3 + Math.random() * 0.4));
+      const dy = g.ch * (0.015 + Math.random() * 0.05);
       fxPlay(el, [
-        { transform: "translate(0,0) scale(0.25)", opacity: 0 },
-        { opacity: 0.95, offset: 0.22 },
-        { transform: "translate(" + dx + "px," + (-dy) + "px) scale(1.6) rotate(" + (Math.random() * 90 - 45) + "deg)", opacity: 0 }
-      ], { duration: 750 + Math.random() * 450, delay: delay + Math.random() * 90, easing: "ease-out", fill: "backwards" });
+        { transform: "translate(0,0) scale(0.4)", opacity: 0 },
+        { opacity: 0.55, offset: 0.25 },
+        { transform: "translate(" + dx + "px," + (-dy) + "px) scale(1.5)", opacity: 0 }
+      ], { duration: 650 + Math.random() * 400, delay: delay + (trail ? i * 22 : Math.random() * 80), easing: "ease-out", fill: "backwards" });
     }
   }
 
@@ -2564,13 +2567,15 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     const def = NPC_POPS[kind];
     if (!def) return;
     const g = fxGeom(card);
-    const size = g.H * (def.t.length > 3 ? 0.17 : 0.24);
+    const size = g.H * (def.t.length > 3 ? 0.1 : 0.14);
     const el = document.createElement("div");
     el.className = "npc-pop";
     el.textContent = def.t;
     const lim = Math.max(size * (def.t.length > 3 ? 2.2 : 1.2), 10);
-    const x = Math.min(Math.max(g.cx + g.cw * 0.28, lim), g.W - lim);
-    const y = Math.max(g.top + g.ch * 0.14, size * 0.7);
+    // à côté de la tête (côté du centre de l'écran), pour ne pas cacher le visage
+    const toRight = g.cx < g.W / 2;
+    const x = Math.min(Math.max(g.cx + (toRight ? 1 : -1) * (g.cw * 0.5 + size * 0.1), lim), g.W - lim);
+    const y = Math.max(g.top + g.ch * 0.08, size * 0.7);
     el.style.cssText = "left:" + x + "px;top:" + y + "px;font-size:" + size + "px;color:" + def.c + ";-webkit-text-stroke-width:" + (size * 0.07) + "px;" +
       "text-shadow:0 " + (size * 0.05) + "px 0 #14110a, 0 0 " + (size * 0.35) + "px rgba(0,0,0,0.5);";
     const C = "translate(-50%,-50%)";
@@ -2626,7 +2631,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
           const spec = npcAnimSpec("enter", card);
           if (spec) {
             card.animate(spec.f, spec.o);
-            fxDust(fxGeom(card), spec.o.duration * (npcSide(card) === "center" ? 0.55 : 0.72), npcSide(card) === "center" ? 1.6 : 1.1);
+            fxDust(fxGeom(card), spec.o.duration * (npcSide(card) === "center" ? 0.55 : 0.72), npcSide(card) === "center" ? 1.2 : 0.9, 0);
           }
         } else if (Date.now() - t0 < 2000) setTimeout(poll, 30);
         else npcHold.delete(file);
@@ -2642,10 +2647,10 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     if (kind !== "exit" && msg.bubble) fxPop(card, kind);
     if (kind === "exit") {
       const g = fxGeom(card), side = npcSide(card);
-      if (side === "center") fxDust(g, 220, 1.8);
+      if (side === "center") fxDust(g, 220, 1.3, 0);
       else {
         fxSpeedLines(g, side === "left" ? -1 : 1, npcSideOffset(card, side), 0, spec.o.duration);
-        fxDust(g, 160, 1.1);
+        fxDust(g, 120, 0.4, side === "left" ? -1 : 1);
       }
     }
     if (kind === "exit") {
