@@ -2474,7 +2474,9 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       case "shake":
         return { f: [T, tx(-16) + " rotate(-2deg)", tx(16) + " rotate(2deg)", tx(-14) + " rotate(-2deg)", tx(14) + " rotate(2deg)", tx(-8), tx(8), T].map(t => ({ transform: t })), o: { duration: 650 } };
       case "sway":
-        return { f: [T, T + " rotate(-7deg)", T + " rotate(7deg)", T + " rotate(-5deg)", T + " rotate(4deg)", T].map(t => ({ transform: t })), o: { duration: 1500, easing: "ease-in-out" } };
+        { // le personnage se penche lentement d'un seul côté (vers le centre de l'écran), tient la pose, puis revient doucement
+          const lean = (side === "right" ? -1 : 1) * 10;
+          return { f: [{ transform: T }, { transform: T + " rotate(" + lean + "deg)", offset: 0.4 }, { transform: T + " rotate(" + lean + "deg)", offset: 0.55 }, { transform: T }], o: { duration: 2600, easing: "ease-in-out" } }; }
       case "squash":
         return { f: [{ transform: T }, { transform: T + " scale(1.28, 0.62)", offset: 0.2 }, { transform: T + " scale(0.86, 1.2)", offset: 0.45 },
           { transform: T + " scale(1.08, 0.94)", offset: 0.7 }, { transform: T }], o: { duration: 850, easing: "ease-out" } };
