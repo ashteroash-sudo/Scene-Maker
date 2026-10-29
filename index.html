@@ -726,6 +726,8 @@
   #npc-fx-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 15; }
   .npc-pop { position: absolute; font-family: Impact, "Arial Black", "Haettenschweiler", sans-serif; font-weight: 900; line-height: 1; white-space: nowrap; color: #ffe14a; paint-order: stroke fill; -webkit-text-stroke-color: #14110a; letter-spacing: 0.02em; }
   .npc-fx-dust { position: absolute; border-radius: 50%; background: radial-gradient(circle at 45% 40%, rgba(214,196,164,0.9), rgba(170,150,120,0.55) 55%, rgba(150,130,105,0) 74%); filter: blur(1.5px); }
+  .npc-portrait .npc-portrait-img { transform-origin: 50% 100%; }
+  #anim-idle-row { display: block; margin: 0 0 8px; font-size: 0.8rem; color: var(--ink-dim); cursor: pointer; }
   #anim-bubble-row { display: block; margin: 0 0 8px; font-size: 0.8rem; color: var(--ink-dim); cursor: pointer; }
   /* tableau d'animations des personnages (MJ) */
   #npc-anim-board { display: none; margin: 8px 0 4px; padding: 8px; border: 1px solid var(--panel-edge); border-radius: 8px; background: rgba(0,0,0,0.18); }
@@ -1498,7 +1500,7 @@
 
       <h3>Personnages <button id="npc-refresh" title="Actualiser la liste">🔄</button></h3>
       <div id="npc-checklist"></div>
-      <div id="npc-anim-board"><div id="anim-targets"></div><label id="anim-bubble-row"><input type="checkbox" id="anim-bubble" checked> 💬 Avec bulle</label><div id="anim-grid"></div></div>
+      <div id="npc-anim-board"><div id="anim-targets"></div><label id="anim-bubble-row"><input type="checkbox" id="anim-bubble" checked> 💬 Avec bulle</label><label id="anim-idle-row"><input type="checkbox" id="anim-idle" checked> 🫁 Mouvements d'attente</label><div id="anim-grid"></div></div>
 
       <h3>Météo</h3>
       <div id="weather-panel">
@@ -2670,6 +2672,56 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       };
     }
   }
+
+
+  // --- mouvements d'attente (idle) : de l'ambiance, pas de l'effet. Appliqués à l'image elle-même, donc compatibles avec les gestes
+  let idleOn = true;
+  const idleNext = new Map();
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  function idleSpec(card, isSpeaker) {
+    const cw = card.offsetWidth, ch = card.offsetHeight;
+    const id = "translate(0,0) rotate(0deg) scale(1,1)";
+    const sg = Math.random() < 0.5 ? -1 : 1;
+    if (isSpeaker) {
+      const n = 1 + Math.floor(Math.random() * 3), h = ch * 0.012, f = [{ transform: id, offset: 0 }];
+      for (let k = 0; k < n; k++) {
+        f.push({ transform: "translateY(" + (-h) + "px) scale(1.008,1.014)", offset: (k + 0.45) / n });
+        f.push({ transform: id, offset: (k + 1) / n });
+      }
+      return { f: f, o: { duration: n * 430, easing: "ease-in-out" }, rest: rnd(1500, 4000) };
+    }
+    const pick = Math.floor(Math.random() * 3);
+    if (pick === 0) return { f: [{ transform: id }, { transform: "scale(0.996,1.013)", offset: 0.5 }, { transform: id }], o: { duration: 3200, easing: "ease-in-out" }, rest: rnd(5000, 12000) };
+    if (pick === 1) return { f: [{ transform: id }, { transform: "translateX(" + (sg * cw * 0.035) + "px) rotate(" + (sg * 0.4) + "deg)", offset: 0.4 },
+      { transform: "translateX(" + (sg * cw * 0.035) + "px) rotate(" + (sg * 0.4) + "deg)", offset: 0.6 }, { transform: id }], o: { duration: 3600, easing: "ease-in-out" }, rest: rnd(5000, 12000) };
+    return { f: [{ transform: id }, { transform: "rotate(" + (sg * 1.6) + "deg)", offset: 0.45 }, { transform: id }], o: { duration: 3000, easing: "ease-in-out" }, rest: rnd(5000, 12000) };
+  }
+
+  function stopIdle() {
+    document.querySelectorAll("#npc-portrait-layer .npc-portrait-img").forEach(img => img.getAnimations().forEach(a => a.cancel()));
+    idleNext.clear();
+  }
+
+  function idleTick() {
+    if (!idleOn || document.hidden) return;
+    const now = Date.now();
+    document.querySelectorAll("#npc-portrait-layer .npc-portrait").forEach(card => {
+      const file = card.dataset.file, img = card.querySelector(".npc-portrait-img");
+      if (!file || !img || card.style.visibility === "hidden" || npcHold.has(file)) return;
+      if (!idleNext.has(file)) { idleNext.set(file, now + rnd(1500, 7000)); return; }
+      if (now < idleNext.get(file)) return;
+      const spec = idleSpec(card, speakingNpc === file);
+      img.animate(spec.f, spec.o);
+      idleNext.set(file, now + spec.o.duration + spec.rest);
+    });
+  }
+  setInterval(idleTick, 400);
+  document.getElementById("anim-idle").addEventListener("change", (e) => {
+    idleOn = e.target.checked;
+    if (!idleOn) stopIdle();
+    broadcastState();
+  });
 
   function renderNpcPortraits() {
     const layer = document.getElementById("npc-portrait-layer");
@@ -6144,6 +6196,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       rainIntensity: rainIntensity,
       snowIntensity: snowIntensity,
       musicVolume: musicVolume,
+      npcIdle: idleOn,
       clock: clockTotal
     });
   }
@@ -6161,6 +6214,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         // l'heure est appliquée tout de suite, dans l'ordre d'arrivée des messages : le chargement d'une scène
         // (await ci-dessous) laisse passer d'autres messages, et un message plus ancien finissait par écraser l'heure
         applyRemoteClock(msg.clock);
+        if (typeof msg.npcIdle === "boolean" && msg.npcIdle !== idleOn) { idleOn = msg.npcIdle; if (!idleOn) stopIdle(); }
         // si la scène a changé côté MJ, on va la charger nous-mêmes depuis
         // le disque (chaque onglet a sa propre lecture du dossier) avant
         // d'appliquer le reste de l'état — sinon le fond/les zones restent
