@@ -720,7 +720,22 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
+    overflow: hidden; /* les animations d'entrée/sortie arrivent du bord de la scène */
   }
+  .npc-portrait { transform-origin: 50% 100%; }
+  /* tableau d'animations des personnages (MJ) */
+  #npc-anim-board { display: none; margin: 8px 0 4px; padding: 8px; border: 1px solid var(--panel-edge); border-radius: 8px; background: rgba(0,0,0,0.18); }
+  #npc-anim-board.has-npc { display: block; }
+  #anim-targets { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .anim-target { display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; background: var(--bg-void); border: 2px solid var(--panel-edge); color: var(--ink); border-radius: 8px; cursor: pointer; font-size: 0.8rem; max-width: 100%; }
+  .anim-target img { width: 30px; height: 38px; object-fit: contain; object-position: bottom; }
+  .anim-target .ph { width: 30px; text-align: center; }
+  .anim-target.sel { border-color: var(--gold); box-shadow: 0 0 8px rgba(201,169,97,0.4); }
+  #anim-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  #anim-grid button { padding: 12px 6px; font-size: 0.95rem; background: var(--bg-void); border: 1px solid var(--panel-edge); color: var(--ink); border-radius: 8px; cursor: pointer; }
+  #anim-grid button:hover { border-color: var(--gold); }
+  #anim-grid button:active { transform: scale(0.96); }
+  #anim-grid button.exit { grid-column: 1 / -1; }
   .npc-portrait {
     position: absolute;
     bottom: 0;
@@ -1478,6 +1493,7 @@
 
       <h3>Personnages <button id="npc-refresh" title="Actualiser la liste">🔄</button></h3>
       <div id="npc-checklist"></div>
+      <div id="npc-anim-board"><div id="anim-targets"></div><div id="anim-grid"></div></div>
 
       <h3>Météo</h3>
       <div id="weather-panel">
@@ -2279,6 +2295,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     el.querySelectorAll(".npc-emote-btn").forEach(btn => {
       btn.addEventListener("click", (e) => { e.stopPropagation(); openEmotePicker(btn); });
     });
+    renderAnimBoard();
   }
 
   async function toggleNpc(fileName, isChecked) {
@@ -2289,6 +2306,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
           renderNpcChecklist();
           return;
         }
+        if (state.mode === "mj") sendNpcAnim({ file: fileName, kind: "enter" }, true);
         activeNpcOrder.push(fileName);
         await ensureNpcObjectURL(fileName);
       }
@@ -2305,6 +2323,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   function toggleSpeaker(fileName) {
     speakingNpc = (speakingNpc === fileName) ? null : fileName;
+    animTarget = null;
     broadcastState();
     renderNpcPortraits();
     renderNpcChecklist();
@@ -2375,6 +2394,149 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     }, 0);
   }
 
+  // ---------------------------------------------------------------
+  // Animations des personnages (entrée, sortie, gestes sur place)
+  // ---------------------------------------------------------------
+  const NPC_GESTURES = [
+    { id: "hop", label: "🦘 Saut" },
+    { id: "shake", label: "💢 Secousse" },
+    { id: "sway", label: "〰️ Balancement" },
+    { id: "squash", label: "🫓 Écrasement" },
+    { id: "spin", label: "🌀 Pirouette" },
+    { id: "exit", label: "🚪 Sortie" }
+  ];
+  const npcHold = new Map(); // personnages cachés le temps d'une entrée / après une sortie : fileName → { kind, until }
+  let animTarget = null;     // personnage choisi dans le tableau (sinon : celui qui parle)
+
+  function animEffectiveTarget() {
+    if (animTarget && activeNpcOrder.includes(animTarget)) return animTarget;
+    if (speakingNpc && activeNpcOrder.includes(speakingNpc)) return speakingNpc;
+    return activeNpcOrder[0] || null;
+  }
+
+  function renderAnimBoard() {
+    const board = document.getElementById("npc-anim-board");
+    if (!board) return;
+    board.classList.toggle("has-npc", activeNpcOrder.length > 0);
+    if (!activeNpcOrder.length) return;
+    const sel = animEffectiveTarget();
+    const targets = document.getElementById("anim-targets");
+    targets.innerHTML = activeNpcOrder.map(f => {
+      const entry = npcList.find(n => n.fileName === f);
+      const name = entry ? entry.displayName : f;
+      const url = npcObjectURLs[f];
+      return '<button type="button" class="anim-target' + (f === sel ? " sel" : "") + '" data-fname="' + escapeAttr(f) + '">' +
+        (url ? '<img src="' + url + '">' : '<span class="ph">🧍</span>') + '<span>' + name + '</span></button>';
+    }).join("");
+    targets.querySelectorAll(".anim-target").forEach(b => b.addEventListener("click", () => { animTarget = b.dataset.fname; renderAnimBoard(); }));
+    const grid = document.getElementById("anim-grid");
+    if (!grid.firstChild) {
+      grid.innerHTML = NPC_GESTURES.map(g => '<button type="button" data-kind="' + g.id + '"' + (g.id === "exit" ? ' class="exit"' : "") + '>' + g.label + '</button>').join("");
+      grid.querySelectorAll("button").forEach(b => b.addEventListener("click", () => triggerNpcAnim(b.dataset.kind)));
+    }
+  }
+
+  function triggerNpcAnim(kind) {
+    const file = animEffectiveTarget();
+    if (!file) { showToast("Aucun personnage à animer.", true); return; }
+    sendNpcAnim({ file: file, kind: kind }, true);
+  }
+
+  function sendNpcAnim(msg, origin) {
+    msg.type = "npc-anim";
+    if (bc) bc.postMessage(msg);
+    handleNpcAnim(msg, origin);
+  }
+
+  function findNpcCard(file) {
+    return Array.prototype.find.call(document.querySelectorAll("#npc-portrait-layer .npc-portrait"), c => c.dataset.file === file) || null;
+  }
+
+  function npcSide(card) {
+    const l = parseFloat(card.style.left);
+    if (l < 45) return "left";
+    if (l > 55) return "right";
+    return "center";
+  }
+
+  function npcAnimSpec(kind, card) {
+    const T = "translateX(-50%)";
+    const tx = (x) => "translateX(calc(-50% + " + Math.round(x) + "px))";
+    const lay = document.getElementById("npc-portrait-layer").getBoundingClientRect();
+    const r = card.getBoundingClientRect();
+    const offL = r.right - lay.left + 40, offR = lay.right - r.left + 40;
+    const offT = r.bottom - lay.top + 40, offB = lay.bottom - r.top + 40;
+    const side = npcSide(card);
+    switch (kind) {
+      case "hop":
+        return { f: [{ transform: T }, { transform: T + " translateY(-14%)", offset: 0.25, easing: "ease-in" }, { transform: T, offset: 0.5 },
+          { transform: T + " translateY(-8%)", offset: 0.72, easing: "ease-in" }, { transform: T }], o: { duration: 750, easing: "ease-out" } };
+      case "shake":
+        return { f: [T, tx(-16) + " rotate(-2deg)", tx(16) + " rotate(2deg)", tx(-14) + " rotate(-2deg)", tx(14) + " rotate(2deg)", tx(-8), tx(8), T].map(t => ({ transform: t })), o: { duration: 650 } };
+      case "sway":
+        return { f: [T, T + " rotate(-7deg)", T + " rotate(7deg)", T + " rotate(-5deg)", T + " rotate(4deg)", T].map(t => ({ transform: t })), o: { duration: 1500, easing: "ease-in-out" } };
+      case "squash":
+        return { f: [{ transform: T }, { transform: T + " scale(1.28, 0.62)", offset: 0.2 }, { transform: T + " scale(0.86, 1.2)", offset: 0.45 },
+          { transform: T + " scale(1.08, 0.94)", offset: 0.7 }, { transform: T }], o: { duration: 850, easing: "ease-out" } };
+      case "spin":
+        return { f: [{ transform: T + " rotateY(0deg)" }, { transform: T + " rotateY(360deg)" }], o: { duration: 900, easing: "ease-in-out" } };
+      case "enter":
+        if (side === "center") return { f: [{ transform: T + " translateY(" + (-offT) + "px)" }, { transform: T, offset: 0.55, easing: "ease-in" },
+          { transform: T + " translateY(-7%)", offset: 0.72 }, { transform: T, offset: 0.88, easing: "ease-in" }, { transform: T + " translateY(-2%)", offset: 0.95 }, { transform: T }], o: { duration: 900, easing: "ease-out" } };
+        { const sg = side === "left" ? -1 : 1, off = side === "left" ? offL : offR;
+          return { f: [{ transform: tx(sg * off) + " rotate(" + (sg * 10) + "deg)" }, { transform: tx(-sg * 18) + " rotate(" + (-sg * 3) + "deg)", offset: 0.7 },
+            { transform: tx(sg * 6) + " rotate(" + (sg) + "deg)", offset: 0.86 }, { transform: T }], o: { duration: 800, easing: "ease-out" } }; }
+      case "exit":
+        if (side === "center") return { f: [{ transform: T }, { transform: T + " translateY(-4%) scale(1.04, 0.96)", offset: 0.2 }, { transform: T + " translateY(" + offB + "px)" }], o: { duration: 700, easing: "ease-in", fill: "forwards" } };
+        { const sg = side === "left" ? -1 : 1, off = side === "left" ? offL : offR;
+          return { f: [{ transform: T }, { transform: tx(-sg * 24) + " rotate(" + (-sg * 4) + "deg)", offset: 0.2 }, { transform: tx(sg * off) + " rotate(" + (sg * 12) + "deg)" }], o: { duration: 700, easing: "ease-in", fill: "forwards" } }; }
+    }
+    return null;
+  }
+
+  // Joue une animation (reçue de l'autre fenêtre, ou lancée ici). origin = true : c'est le MJ qui l'a déclenchée
+  function handleNpcAnim(msg, origin) {
+    const file = msg.file, kind = msg.kind;
+    if (!file || !kind) return;
+    if (kind === "enter") {
+      npcHold.set(file, { kind: "enter", until: Date.now() + 2500 });
+      const t0 = Date.now();
+      const poll = () => {
+        const card = findNpcCard(file);
+        if (card) {
+          npcHold.delete(file);
+          card.style.visibility = "";
+          const spec = npcAnimSpec("enter", card);
+          if (spec) card.animate(spec.f, spec.o);
+        } else if (Date.now() - t0 < 2000) setTimeout(poll, 30);
+        else npcHold.delete(file);
+      };
+      poll();
+      return;
+    }
+    const card = findNpcCard(file);
+    if (!card) return;
+    const spec = npcAnimSpec(kind, card);
+    if (!spec) return;
+    const anim = card.animate(spec.f, spec.o);
+    if (kind === "exit") {
+      npcHold.set(file, { kind: "exit", until: Date.now() + 5000 });
+      anim.onfinish = () => {
+        card.style.visibility = "hidden";
+        if (origin) {
+          activeNpcOrder = activeNpcOrder.filter(f => f !== file);
+          if (speakingNpc === file) speakingNpc = null;
+          clearNpcEmote(file);
+          if (animTarget === file) animTarget = null;
+          if (diskMode) saveSceneToDisk();
+          broadcastState();
+          renderNpcPortraits();
+          renderNpcChecklist();
+        }
+      };
+    }
+  }
+
   function renderNpcPortraits() {
     const layer = document.getElementById("npc-portrait-layer");
     layer.innerHTML = "";
@@ -2402,7 +2564,13 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       const card = document.createElement("div");
       card.className = "npc-portrait" + (isSpeaking ? " speaking" : (hasSpeaker ? " dimmed" : ""));
       card.style.left = left;
+      card.dataset.file = fileName;
       card.style.maxWidth = maxWidthPct + "%";
+      const hold = npcHold.get(fileName);
+      if (hold) {
+        if (Date.now() > hold.until || (hold.kind === "exit" && !activeNpcOrder.includes(fileName))) npcHold.delete(fileName);
+        else card.style.visibility = "hidden";
+      }
       const url = npcObjectURLs[fileName];
       const entry = npcList.find(n => n.fileName === fileName);
       const displayName = entry ? entry.displayName : fileName;
@@ -5911,6 +6079,8 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
         }
         render();
         hydrateActiveNpcImages();
+      } else if (msg.type === "npc-anim") {
+        handleNpcAnim(msg, false);
       } else if (msg.type === "effect") {
         if (msg.effect === "shake") playShake();
         else if (msg.effect === "zoom") playZoom();
