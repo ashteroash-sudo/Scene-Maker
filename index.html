@@ -4587,7 +4587,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       }
     } else if (zone.type === "lien") {
       if (!zone.url) { showToast("Aucune adresse pour ce lien (mode Édition).", true); return; }
-      clockAddZoneSearch(zone);
+      try { clockAddZoneSearch(zone); } catch (e) { console.warn("horloge :", e); }
       openLink(zone.url);
     } else if (zone.type === "scene") {
       goToScene(zone.target);
@@ -6343,12 +6343,19 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       overlay.classList.toggle("open", !!url);
       frame.src = url || "about:blank";
     }
-    setMediaPaused(!!url);
+    try { setMediaPaused(!!url); } catch (e) { console.warn("pause du son :", e); }
   }
 
+  let linkAckAt = 0, playerClosedLinkId = 0, playerAckedLinkId = 0;
+  // ouvre (ou ré-envoie) le lien : un clic sur la zone fonctionne toujours, même si le lien était déjà marqué ouvert
   function openLink(url) {
+    state.linkId = Date.now();
     applyLink(url);
     broadcastState();
+    const sentAt = Date.now();
+    setTimeout(() => {
+      if (state.linkUrl === url && linkAckAt < sentAt) showToast("⚠️ Aucune vue Joueur n'a répondu : ouvre la fenêtre « Vue Joueur » (le lien s'y affichera dès qu'elle sera ouverte).", true);
+    }, 1500);
   }
 
   function closeLinkFromMj() {
@@ -6358,6 +6365,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
 
   document.getElementById("link-banner-close").addEventListener("click", closeLinkFromMj);
   document.getElementById("link-close").addEventListener("click", () => {
+    playerClosedLinkId = state.linkId || 0;
     applyLink(null);
     if (bc) bc.postMessage({ type: "link-close" });
   });
@@ -6384,6 +6392,7 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       musicVolume: musicVolume,
       npcIdle: idleOn,
       linkUrl: state.linkUrl || null,
+      linkId: state.linkId || 0,
       clock: clockLoaded ? clockTotal : undefined
     });
   }
@@ -6397,13 +6406,26 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
       if (!msg) return;
       if (msg.type === "request-state" && state.mode !== "player") {
         broadcastState();
+      } else if (msg.type === "link-ack" && state.mode !== "player") {
+        linkAckAt = Date.now();
       } else if (msg.type === "link-close" && state.mode !== "player") {
         closeLinkFromMj();
       } else if (msg.type === "state" && state.mode === "player") {
         // l'heure est appliquée tout de suite, dans l'ordre d'arrivée des messages : le chargement d'une scène
         // (await ci-dessous) laisse passer d'autres messages, et un message plus ancien finissait par écraser l'heure
         applyRemoteClock(msg.clock);
-        applyLink(msg.linkUrl || null);
+        {
+          // lien : un message qui concerne un lien que le Joueur vient de fermer lui-même est ignoré (évite qu'un message en vol le rouvre)
+          const lid = msg.linkId || 0;
+          const url = (msg.linkUrl && !(lid && lid === playerClosedLinkId)) ? msg.linkUrl : null;
+          state.linkId = lid;
+          applyLink(url);
+          if (url) {
+            const ov = document.getElementById("link-overlay");
+            if (!ov.classList.contains("open")) { ov.classList.add("open"); document.getElementById("link-frame").src = url; }
+            if (lid !== playerAckedLinkId) { playerAckedLinkId = lid; if (bc) bc.postMessage({ type: "link-ack" }); } // le Joueur confirme au MJ que le lien est affiché
+          }
+        }
         if (typeof msg.npcIdle === "boolean" && msg.npcIdle !== idleOn) { idleOn = msg.npcIdle; if (!idleOn) stopIdle(); }
         // si la scène a changé côté MJ, on va la charger nous-mêmes depuis
         // le disque (chaque onglet a sa propre lecture du dossier) avant
