@@ -2684,12 +2684,12 @@ window.__SCENE_IMG__ = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDA
     const id = "translate(0,0) rotate(0deg) scale(1,1)";
     const sg = Math.random() < 0.5 ? -1 : 1;
     if (isSpeaker) {
-      const n = 1 + Math.floor(Math.random() * 3), h = ch * 0.012, f = [{ transform: id, offset: 0 }];
+      const n = 1 + Math.floor(Math.random() * 2), h = ch * 0.008, f = [{ transform: id, offset: 0 }];
       for (let k = 0; k < n; k++) {
-        f.push({ transform: "translateY(" + (-h) + "px) scale(1.008,1.014)", offset: (k + 0.45) / n });
+        f.push({ transform: "translateY(" + (-h) + "px) scale(1.005,1.01)", offset: (k + 0.5) / n });
         f.push({ transform: id, offset: (k + 1) / n });
       }
-      return { f: f, o: { duration: n * 430, easing: "ease-in-out" }, rest: rnd(1500, 4000) };
+      return { f: f, o: { duration: n * 1000, easing: "ease-in-out" }, rest: rnd(3000, 7000) };
     }
     const pick = Math.floor(Math.random() * 3);
     if (pick === 0) return { f: [{ transform: id }, { transform: "scale(0.996,1.013)", offset: 0.5 }, { transform: id }], o: { duration: 3200, easing: "ease-in-out" }, rest: rnd(5000, 12000) };
